@@ -1,0 +1,50 @@
+{
+  "expo": {
+    "name": "Herbeco",
+    "slug": "herbeco",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/logo.png",
+    "userInterfaceStyle": "light",
+    "scheme": "herbeco",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.herbeco.app",
+      "infoPlist": {
+        "NSCameraUsageDescription": "Herbeco uses the camera so you can take product photos for your catalogue.",
+        "NSPhotoLibraryUsageDescription": "Herbeco needs access to your photo library so you can choose product photos."
+      }
+    },
+    "android": {
+      "package": "com.herbeco.app",
+      "permissions": ["CAMERA"],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/logo.png",
+        "backgroundColor": "#1F6F43"
+      }
+    },
+    "plugins": [
+      ["expo-router", { "root": "app" }],
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/logo.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#F7F9F5"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "Herbeco uses the camera so you can take product photos for your catalogue.",
+          "cameraMicrophonePermission": false
+        }
+      ]
+    ],
+    "experiments": {
+      "tsconfigPaths": true
+    }
+  }
+}
