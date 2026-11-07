@@ -60,34 +60,52 @@ replacement updates the whole app.
 3. You can delete `scripts/make-logo.js` after replacing the file — it only
    generated the placeholder.
 
-## Bills tab — saved sales, status and 30-day retention
+## Bills tab — saved sales, status, date filter and Excel export
 
 Every generated bill is automatically saved to a local SQLite database
 (`expo-sqlite`, file `herbeco.db`) and appears in the **Bills** tab:
 
 - **Pending** until you tap **Uploaded** — use this after you have uploaded
   the bill manually (e.g. to the GST portal). You can tap **Undo** any time.
-- Each entry shows the bill number (HB-0001…), date/time, customer, item
-  count, flow (Referral +10%) and grand total, with pending/uploaded chips
-  and a header summary.
-- Actions per bill: **WhatsApp** (PDF + copied greeting), **Share PDF**, and
-  a dustbin to delete a single bill.
-- **30-day auto-delete:** bills older than 30 days are deleted automatically
-  whenever the Bills tab is opened; a toast tells you how many were cleaned
-  up. This is device-local storage only.
+- **Compact rows.** Each bill is a short card (bill number, pending/uploaded
+  chip, grand total; then customer, item count, time and any discount) with
+  all five actions on one row of small buttons. Bills are grouped under the
+  day they were billed — **Today**, **Yesterday**, then the date — and each
+  day heading carries its bill count and total.
+- Actions per bill: **WhatsApp** (opens that customer's chat with the
+  greeting typed in), **PDF** (document only), **Edit**, **Upload**/**Undo**
+  and **Delete**.
+- **Nothing is auto-deleted.** Bills stay until you delete them by hand, so
+  yearly reports and exports keep their full history.
+- **Date filter:** quick chips (All / Today / 7 days / 30 days / This month /
+  This year) plus a **Date** chip that opens a calendar for either **one
+  specific date** or a **From – To** range (both ends included, no future
+  days). The active date shows on the chip and can be cleared with its ×, and
+  tapping a quick chip drops the custom date again. Every total on screen
+  uses the filtered set.
+- **Edit any bill:** the Edit button opens the bill where the customer, the
+  items, any quantity, any rate and the discount can be changed — or another
+  product added from the catalogue. Saving recomputes the discount and GST,
+  updates the saved row in place (number, date and upload status stay) and
+  clears the cached PDF so the next share shows the edited bill.
+- **Download Excel:** writes a `.csv` (UTF-8 with BOM, opens natively in
+  Excel / Google Sheets / WPS) and opens the share sheet. Columns are exactly
+  **Customer Name, Phone Number, Total Amount** — and only the bills matching
+  the active date filter are included.
 
-## Sharing bills on WhatsApp (PDF + greeting in one tap)
+## Sharing bills on WhatsApp
 
-WhatsApp cannot send a text message and a file attachment in a single
-share (and wa.me links cannot carry files), so HERBECO's **Share on
-WhatsApp** button does the next best thing in one tap:
+**Send on WhatsApp** opens the customer's own chat directly — `whatsapp://send`
+with the bill's number, falling back to `wa.me`. There is no contact list to
+search and the greeting is typed into the message box, ready to press send.
 
-1. The greeting message is copied to the clipboard automatically.
-2. The PDF opens in the OS share sheet — pick the customer's chat.
-3. Paste the greeting into the chat (long-press → Paste).
+WhatsApp links cannot attach a file, so **Share PDF** stays separate: it hands
+just the document to the OS share sheet, with no message, no greeting and
+nothing copied to the clipboard. The greeting never appears inside the PDF
+either — it exists only in the WhatsApp message.
 
-The generated PDF is cached on disk per bill number, so re-sharing an old
-bill from the Bills tab is instant.
+The generated PDF is cached on disk per bill number (template version `v4`),
+so re-sharing an old bill from the Bills tab is instant.
 
 ## PDF generation speed
 
@@ -98,6 +116,90 @@ Two caches remove the old wait:
 - The PDF itself is written to `documentDirectory/bills/<bill number>.pdf` and
   reused while it exists, so tapping Share on an already-generated bill skips
   generation entirely.
+
+## Settings, referral partners and the 10% commission
+
+The tab bar reads **Dashboard, Home, Referral, Bills, Settings**.
+
+The Settings tab is a short menu of two separate cards — **Products** and
+**Referral partners** — each opening its own page:
+
+- **Settings → Products** (`app/settings/products.tsx`): add a product from the
+  **Add** button, search the catalogue, and edit or delete any item.
+- **Settings → Referral partners** (`app/settings/referrals.tsx`): one row per
+  partner with just the **name, referral ID and commission earned**, a search
+  box that matches name or ID, and an **All partners / Top earner** filter.
+  Tapping a row opens the partner's ledger
+  (`app/settings/referral-detail.tsx`): bills, sales, earned/paid/pending, and
+  one card per referral bill with its **purchase date**, bill amount, the 10%
+  commission on it and a **Paid / Not paid** toggle. Edit and delete live on
+  that page. IDs are case-insensitive and unique — adding an existing ID is
+  refused instead of silently overwriting that partner.
+
+Each bill's commission is tracked separately in the `invoices` table
+(`commission_paid`, `commission_paid_ms`), so marking one bill paid never
+changes the others and the paid + pending totals always add up to the earned
+total.
+
+Billing with a partner works like this:
+
+1. Open the **Referral** tab. Until a partner is chosen it shows the referral
+   ID screen, with an X (and "Cancel and go back") to leave it.
+2. Type the ID — it is checked against the saved partners. A match shows the
+   partner's name and unlocks the products at the usual +10% referral prices;
+   an unknown ID explains that it must be added in Settings first. "Change"
+   (on the products banner or in the cart) locks the flow so another ID can be
+   typed.
+3. The cart behaves exactly like a home cart: the **customer's own name and
+   phone are still entered there**. The partner is attached to the bill as a
+   referral tag (shown as "Referral: name (ID)" on screen and in the PDF) —
+   the customer on the invoice is the person buying, not the partner.
+4. **10% of each bill** is credited to that partner. Settings shows each
+   partner's bills, sales and "Earned 10%", and the dashboard shows the
+   commission for the selected period.
+
+Every other part of the flow (items, grams/₹ entry, discount, GST, PDF,
+WhatsApp) is identical to a home sale. The bill itself is the customer's copy,
+so it never prints the referral badge, the "Referred by" line or the +10%
+markup — the partner and their commission only appear in Settings.
+
+Once a bill is saved the cart is emptied straight away, and a referral sale
+also clears the active partner — opening the Referral tab again asks for a
+referral ID instead of reopening the previous partner's cart.
+
+## Cart discount
+
+The cart has a **Discount (₹)** box. The amount is taken off the subtotal
+*before* GST, so `total = (subtotal − discount) + 5% of (subtotal − discount)`.
+It is capped at the subtotal, shows in the bill summary, on the in-app bill,
+in the PDF and in the saved bill record. Each cart keeps its own discount and
+it resets when the cart is cleared.
+
+## Dashboard tab
+
+Every number comes from the bills saved in SQLite — there is no sample data.
+The filter picks the **period being reported**, so the four options never show
+the same figures:
+
+- **Daily** — today
+- **Weekly** — this week (Monday to Sunday)
+- **Monthly** — this calendar month
+- **Yearly** — this calendar year
+
+The KPI cards (sales, bills, average bill, discounts), the home-vs-referral
+split with the partner commission and **Top moving items** (top 5 by revenue,
+with quantity sold) all use that period. The bar chart below them shows the
+recent **trend** — last 14 days, 8 weeks, 12 months or 5 years — and is drawn
+with plain Views (no chart library), so it works inside Expo Go at any screen
+width. The date maths lives in `utils/analytics.ts`.
+
+## Keyboard handling
+
+The product grid (Home/Referral) and the Settings → Products list add the live keyboard
+height to their scroll padding, hide the floating cart bar while typing, close
+on drag, and offer a clear (×) button in the search box — so the last rows are
+never trapped behind the keyboard. The referral ID screen and the partner
+sheet offset themselves by the keyboard height too.
 
 ## How the Home and Referral carts stay separate
 
@@ -164,3 +266,5 @@ assets/      logo.png
 ```bash
 npm run typecheck   # strict TypeScript, all-pass
 ```
+#   H e r b e c o B i l l M o b i l e A p p  
+ 
