@@ -28,6 +28,7 @@ import {
 import { saveInvoice } from '../store/invoiceDb';
 import { useHomeCart } from '../store/homeCartStore';
 import { useReferralCart } from '../store/referralCartStore';
+import { useReferralSession } from '../store/referralSession';
 import type { Invoice, CartType } from '../types';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { showToast } from '../components/Toast';
@@ -59,11 +60,22 @@ export default function BillScreen() {
     (async () => {
       try {
         await Promise.all([
-          saveInvoice(invoice).catch((e) => {
-            console.log('saveInvoice error', e);
-            showToast('Could not save the bill history', 'error');
-            return null;
-          }),
+          saveInvoice(invoice)
+            .then(() => {
+              // The sale is finished: empty this flow's cart immediately. For a
+              // referral sale also forget the partner, so opening Referral again
+              // asks for an ID instead of reopening the previous partner's cart.
+              if (invoice.type === 'referral') {
+                useReferralCart.getState().clearCart();
+                useReferralSession.getState().clearActive();
+              } else {
+                useHomeCart.getState().clearCart();
+              }
+            })
+            .catch((e) => {
+              console.log('saveInvoice error', e);
+              showToast('Could not save the bill history', 'error');
+            }),
           getInvoicePdfUri(invoice).catch((e) => {
             console.log('getInvoicePdfUri error', e);
             throw e;
@@ -95,13 +107,15 @@ export default function BillScreen() {
     }
   };
 
-  /** Clears THIS flow's cart and returns to the home tab. */
+  /**
+   * The cart was already emptied when the bill was saved. A referral sale
+   * returns to the Referral tab, which now asks for the next referral ID.
+   */
   const newSale = () => {
     if (type === 'referral') useReferralCart.getState().clearCart();
     else useHomeCart.getState().clearCart();
-    showToast('Cart cleared — ready for a new sale');
     router.dismissAll();
-    router.replace('/(tabs)');
+    router.replace(type === 'referral' ? '/(tabs)/referral' : '/(tabs)');
   };
 
   if (!invoice) {
@@ -159,14 +173,10 @@ export default function BillScreen() {
           </View>
         </View>
 
-        {/* Title row */}
+        {/* Title row — the bill is the customer's copy, so no flow or partner
+            details are printed on it. */}
         <View style={styles.titleRow}>
           <Text style={styles.docTitle}>TAX INVOICE</Text>
-          {invoice.type === 'referral' ? (
-            <View style={styles.flowBadge}>
-              <Text style={styles.flowBadgeText}>REFERRAL SALE (+10%)</Text>
-            </View>
-          ) : null}
         </View>
         <View style={styles.metaRow}>
           <Text style={styles.metaText}>
@@ -213,6 +223,14 @@ export default function BillScreen() {
             <Text style={styles.totalLabel}>Subtotal</Text>
             <Text style={styles.totalValue}>{formatINR(invoice.subtotal)}</Text>
           </View>
+          {(invoice.discount ?? 0) > 0 ? (
+            <View style={styles.totalRow}>
+              <Text style={styles.totalLabel}>Discount</Text>
+              <Text style={[styles.totalValue, styles.discountValue]}>
+                − {formatINR(invoice.discount ?? 0)}
+              </Text>
+            </View>
+          ) : null}
           <View style={styles.totalRow}>
             <Text style={styles.totalLabel}>GST (5%)</Text>
             <Text style={styles.totalValue}>{formatINR(invoice.gst)}</Text>
@@ -363,18 +381,6 @@ const styles = StyleSheet.create({
     letterSpacing: 3,
     color: colors.primary,
   },
-  flowBadge: {
-    backgroundColor: colors.gold,
-    borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-  },
-  flowBadgeText: {
-    fontFamily: fonts.semiBold,
-    fontSize: fontSize.xs - 2,
-    color: colors.textOnPrimary,
-    letterSpacing: 1,
-  },
   metaRow: {
     flexWrap: 'wrap',
     rowGap: 2,
@@ -483,6 +489,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: fontSize.xs,
     color: colors.text,
+  },
+  discountValue: {
+    color: colors.gold,
   },
   grandRow: {
     flexDirection: 'row',

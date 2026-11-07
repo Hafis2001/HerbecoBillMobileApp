@@ -9,6 +9,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -17,6 +18,7 @@ import {
   View,
 } from 'react-native';
 import theme from '../constants/theme';
+import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import { formatINR } from '../utils/format';
 import { getReferralPrice, round2 } from '../utils/pricing';
 import type { CartItem, Product, Unit } from '../types';
@@ -43,6 +45,10 @@ interface ProductListScreenProps {
   setQuantity: (productId: string, quantity: number) => void;
   increment: (productId: string, step?: number) => void;
   decrement: (productId: string, step?: number) => void;
+  /** Name of the active referral partner (referral flow only). */
+  referralName?: string;
+  /** Switches to a different referral ID (clears the active partner). */
+  onChangeReferral?: () => void;
 }
 
 export function ProductListScreen({
@@ -53,8 +59,14 @@ export function ProductListScreen({
   setQuantity,
   increment,
   decrement,
+  referralName,
+  onChangeReferral,
 }: ProductListScreenProps) {
   const { width } = useWindowDimensions();
+  // The keyboard overlays the grid on edge-to-edge Android, so the list adds
+  // the keyboard's height to its bottom padding and every product stays
+  // scrollable into view above it.
+  const keyboardHeight = useKeyboardHeight();
   // Phones get 2 columns, small tablets 3, large tablets/foldables 4, so the
   // cards never stretch into huge uneven blocks.
   const columns = width >= 1000 ? 4 : width >= 720 ? 3 : 2;
@@ -127,7 +139,18 @@ export function ProductListScreen({
             placeholderTextColor={colors.textMuted}
             style={styles.searchInput}
             returnKeyType="search"
+            autoCorrect={false}
           />
+          {search.length > 0 ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Clear search"
+              onPress={() => setSearch('')}
+              hitSlop={10}
+            >
+              <Feather name="x-circle" size={17} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
         </View>
       </View>
       <View style={styles.chipsRow}>
@@ -144,9 +167,21 @@ export function ProductListScreen({
       {isReferral ? (
         <View style={styles.referralBanner}>
           <Feather name="users" size={14} color={colors.gold} />
-          <Text style={styles.referralBannerText}>
-            Referral pricing — every product price includes +10%
+          <Text style={styles.referralBannerText} numberOfLines={2}>
+            {referralName ? `${referralName} · ` : ''}Referral pricing — every product
+            price includes +10%
           </Text>
+          {onChangeReferral ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Change referral ID"
+              onPress={onChangeReferral}
+              hitSlop={8}
+              style={({ pressed }) => [styles.changeChip, pressed && { opacity: 0.8 }]}
+            >
+              <Text style={styles.changeChipText}>Change</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
 
@@ -169,8 +204,13 @@ export function ProductListScreen({
           keyExtractor={(p) => p.id}
           numColumns={columns}
           columnWrapperStyle={styles.column}
-          contentContainerStyle={styles.grid}
+          contentContainerStyle={[
+            styles.grid,
+            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 32 : 160 },
+          ]}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           renderItem={({ item }) => (
             <ProductCard
               product={item}
@@ -197,8 +237,9 @@ export function ProductListScreen({
         />
       ) : null}
 
-      {/* Floating "View Cart" bar (only when the cart has items) */}
-      {itemCount > 0 ? (
+      {/* Floating "View Cart" bar (only when the cart has items and the
+          keyboard is closed — otherwise it would sit on top of the grid) */}
+      {itemCount > 0 && keyboardHeight === 0 ? (
         <Pressable
           accessibilityRole="button"
           onPress={openCart}
@@ -276,6 +317,18 @@ const styles = StyleSheet.create({
   grid: {
     paddingHorizontal: spacing.sm / 2,
     paddingBottom: 160,
+  },
+  changeChip: {
+    flexShrink: 0,
+    borderRadius: radius.pill,
+    backgroundColor: colors.gold,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  changeChipText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs - 1,
+    color: colors.textOnPrimary,
   },
   column: {
     // Cards carry their own outer margin, which keeps the gutters even for

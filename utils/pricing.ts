@@ -6,6 +6,8 @@
 
 export const GST_RATE = 0.05;
 export const REFERRAL_MARKUP = 0.1;
+/** Share of a referral bill that is credited to the referral partner. */
+export const REFERRAL_COMMISSION_RATE = 0.1;
 
 /** Round to 2 decimals without float drift (e.g. 0.53000001 -> 0.53). */
 export function round2(value: number): number {
@@ -30,19 +32,31 @@ export interface PricingLine {
 
 export interface Totals {
   subtotal: number;
+  /** Discount actually applied (never more than the subtotal). */
+  discount: number;
+  /** Subtotal after the discount — GST is charged on this. */
+  taxable: number;
   gst: number;
   grandTotal: number;
 }
 
 /**
- * Subtotal = sum(round2(price x qty)),
- * GST (5%) = subtotal x 0.05, Grand Total = subtotal + GST.
+ * Subtotal = sum(round2(price x qty)).
+ * A flat discount (₹) is taken off the subtotal first, then GST (5%) is
+ * charged on the discounted amount: Grand Total = (subtotal - discount) + GST.
  */
-export function computeTotals(lines: PricingLine[]): Totals {
+export function computeTotals(lines: PricingLine[], discount = 0): Totals {
   const subtotal = round2(
     lines.reduce((sum, line) => sum + round2(line.unitPrice * line.quantity), 0),
   );
-  const gst = round2(subtotal * GST_RATE);
-  const grandTotal = round2(subtotal + gst);
-  return { subtotal, gst, grandTotal };
+  const appliedDiscount = round2(Math.min(Math.max(discount || 0, 0), subtotal));
+  const taxable = round2(subtotal - appliedDiscount);
+  const gst = round2(taxable * GST_RATE);
+  const grandTotal = round2(taxable + gst);
+  return { subtotal, discount: appliedDiscount, taxable, gst, grandTotal };
+}
+
+/** 10% of a bill total — credited to the referral partner. */
+export function referralCommission(grandTotal: number): number {
+  return round2(grandTotal * REFERRAL_COMMISSION_RATE);
 }

@@ -19,7 +19,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ToastHost } from '../components/Toast';
 import theme from '../constants/theme';
-import { purgeExpiredInvoices } from '../store/invoiceDb';
+import { getDatabase } from '../store/db';
 
 // Keep the native splash up while fonts load.
 void SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -38,8 +38,9 @@ export default function RootLayout() {
     }
   }, [fontsLoaded, fontError]);
 
+  // Open + migrate the local database once, before any screen queries it.
   useEffect(() => {
-    void purgeExpiredInvoices(30).catch(() => {});
+    void getDatabase().catch(() => {});
   }, []);
 
   if (!fontsLoaded && !fontError) {
@@ -62,6 +63,7 @@ export default function RootLayout() {
             <Stack.Screen name="add-product" options={{ presentation: 'modal' }} />
             <Stack.Screen name="cart" />
             <Stack.Screen name="bill" options={{ gestureEnabled: false }} />
+            <Stack.Screen name="edit-bill" />
           </Stack>
           <ToastHost />
         </View>

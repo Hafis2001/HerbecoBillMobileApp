@@ -12,14 +12,19 @@ const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
 interface SummaryCardProps {
   subtotal: number;
+  /** Flat discount already applied (0 hides the row). */
+  discount?: number;
   gst: number;
   grandTotal: number;
 }
 
-export function SummaryCard({ subtotal, gst, grandTotal }: SummaryCardProps) {
+export function SummaryCard({ subtotal, discount = 0, gst, grandTotal }: SummaryCardProps) {
   return (
     <View style={styles.card}>
       <SummaryRow label="Subtotal" value={formatINR(subtotal)} />
+      {discount > 0 ? (
+        <SummaryRow label="Discount" value={`− ${formatINR(discount)}`} highlight />
+      ) : null}
       <SummaryRow label="GST (5%)" value={formatINR(gst)} />
       <View style={styles.grandRow}>
         <Text style={styles.grandLabel}>Grand Total</Text>
@@ -29,11 +34,19 @@ export function SummaryCard({ subtotal, gst, grandTotal }: SummaryCardProps) {
   );
 }
 
-function SummaryRow({ label, value }: { label: string; value: string }) {
+function SummaryRow({
+  label,
+  value,
+  highlight = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
   return (
     <View style={styles.row}>
       <Text style={styles.label}>{label}</Text>
-      <Text style={styles.value}>{value}</Text>
+      <Text style={[styles.value, highlight && styles.valueHighlight]}>{value}</Text>
     </View>
   );
 }
@@ -60,6 +73,9 @@ const styles = StyleSheet.create({
     fontFamily: fonts.medium,
     fontSize: fontSize.sm,
     color: colors.text,
+  },
+  valueHighlight: {
+    color: colors.gold,
   },
   grandRow: {
     flexDirection: 'row',

@@ -1,51 +1,165 @@
 /**
  * Bills tab — every generated bill is saved here (local SQLite) with a
- * "Pending" or "Uploaded" status. Bills older than 30 days are removed
- * automatically. Each bill can be re-shared (PDF and/or WhatsApp) from here.
+ * "Pending" or "Uploaded" status. Bills are kept until the owner deletes
+ * them: there is no automatic expiry, so old bills still export.
+ *
+ * The list is compact: one short card per bill, grouped under the day it was
+ * billed, with the five actions as small buttons on a single row. The date
+ * filter accepts the quick ranges, one specific day, or a From – To range, and
+ * "Download Excel" exports exactly the bills in view.
  */
 
-import { Feather, Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
-import React, { useCallback, useState } from 'react';
+import { Feather } from '@expo/vector-icons';
+import { router, useFocusEffect } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
-  Alert,
   ActivityIndicator,
-  FlatList,
+  Alert,
   Pressable,
+  ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { Image } from 'react-native';
 import theme from '../../constants/theme';
 import { EmptyState } from '../../components/EmptyState';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { showToast } from '../../components/Toast';
-import {
-  deleteInvoice,
-  getInvoiceRecords,
-  purgeExpiredInvoices,
-  setInvoiceStatus,
-} from '../../store/invoiceDb';
-import { getInvoicePdfUri, shareInvoiceOnWhatsApp, shareInvoicePdf } from '../../utils/pdf';
-import { formatINRShort, formatDateTime } from '../../utils/format';
+import DateFilterSheet, { type DateFilterValue } from '../../components/DateFilterSheet';
+import { deleteInvoice, getInvoiceRecords, setInvoiceStatus } from '../../store/invoiceDb';
+import { shareInvoiceOnWhatsApp, shareInvoicePdf } from '../../utils/pdf';
+import { exportBillsToCsv } from '../../utils/excel';
+import { formatINR, formatINRShort } from '../../utils/format';
 import type { Invoice, InvoiceRecord } from '../../types';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
-const RETENTION_DAYS = 30;
+type RangeKey = 'all' | 'today' | '7d' | '30d' | 'month' | 'year';
+
+const RANGES: Array<{ key: RangeKey; label: string }> = [
+  { key: 'all', label: 'All' },
+  { key: 'today', label: 'Today' },
+  { key: '7d', label: '7 days' },
+  { key: '30d', label: '30 days' },
+  { key: 'month', label: 'This month' },
+  { key: 'year', label: 'This year' },
+];
+
+/** Epoch ms for the first moment of the selected range (null = no limit). */
+function rangeStart(key: RangeKey): number | null {
+  if (key === 'all') return null;
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  switch (key) {
+    case 'today':
+      return start.getTime();
+    case '7d':
+      start.setDate(start.getDate() - 6);
+      return start.getTime();
+    case '30d':
+      start.setDate(start.getDate() - 29);
+      return start.getTime();
+    case 'month':
+      return new Date(now.getFullYear(), now.getMonth(), 1).getTime();
+    case 'year':
+      return new Date(now.getFullYear(), 0, 1).getTime();
+    default:
+      return null;
+  }
+}
+
+const startOfDay = (ms: number): number => {
+  const d = new Date(ms);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+};
+
+const endOfDay = (ms: number): number => startOfDay(ms) + 86400000 - 1;
+
+/** "05 Nov 2026" */
+const formatDay = (ms: number): string =>
+  new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }).format(
+    new Date(ms),
+  );
+
+/** "05 Nov" */
+const formatDayShort = (ms: number): string =>
+  new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short' }).format(new Date(ms));
+
+/** "3:45 PM" */
+const formatTime = (ms: number): string =>
+  new Intl.DateTimeFormat('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true }).format(
+    new Date(ms),
+  );
+
+/** Section title for a day: Today / Yesterday / "Wed, 05 Nov 2026". */
+function dayHeading(ms: number): string {
+  const today = startOfDay(Date.now());
+  const day = startOfDay(ms);
+  if (day === today) return 'Today';
+  if (day === today - 86400000) return 'Yesterday';
+  return new Intl.DateTimeFormat('en-IN', {
+    weekday: 'short',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(ms));
+}
+
+interface BillSection {
+  key: string;
+  title: string;
+  count: number;
+  total: number;
+  data: InvoiceRecord[];
+}
+
+interface ActionButtonProps {
+  icon: keyof typeof Feather.glyphMap;
+  label: string;
+  color: string;
+  accessibilityLabel: string;
+  onPress: () => void;
+  busy?: boolean;
+}
+
+/** One compact action on the bill row: icon over a 9px label. */
+function ActionButton({ icon, label, color, accessibilityLabel, onPress, busy }: ActionButtonProps) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={accessibilityLabel}
+      onPress={onPress}
+      style={({ pressed }) => [styles.actionBtn, pressed && styles.actionPressed]}
+    >
+      {busy ? (
+        <ActivityIndicator size="small" color={colors.primary} />
+      ) : (
+        <>
+          <Feather name={icon} size={15} color={color} />
+          <Text style={[styles.actionLabel, { color }]} numberOfLines={1}>
+            {label}
+          </Text>
+        </>
+      )}
+    </Pressable>
+  );
+}
 
 export default function BillsTab() {
   const [records, setRecords] = useState<InvoiceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyNumber, setBusyNumber] = useState<string | null>(null);
+  const [range, setRange] = useState<RangeKey>('all');
+  const [dateFilter, setDateFilter] = useState<DateFilterValue | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
 
   const reload = useCallback(async () => {
     setLoading(true);
     try {
-      const purged = await purgeExpiredInvoices(RETENTION_DAYS);
-      if (purged > 0) showToast(`${purged} bill(s) older than 30 days deleted`);
       setRecords(await getInvoiceRecords());
     } catch {
       showToast('Could not load saved bills', 'error');
@@ -60,15 +174,68 @@ export default function BillsTab() {
     }, [reload]),
   );
 
+  const filtered = useMemo(() => {
+    const start = dateFilter ? startOfDay(dateFilter.fromMs) : rangeStart(range);
+    const end = dateFilter ? endOfDay(dateFilter.toMs) : null;
+    return records
+      .filter((r) => {
+        if (start !== null && r.createdAtMs < start) return false;
+        if (end !== null && r.createdAtMs > end) return false;
+        return true;
+      })
+      .sort((a, b) => b.createdAtMs - a.createdAtMs);
+  }, [records, range, dateFilter]);
+
+  const rangeLabel = RANGES.find((r) => r.key === range)?.label ?? 'All';
+  const dateLabel = dateFilter
+    ? dateFilter.mode === 'single' || dateFilter.fromMs === dateFilter.toMs
+      ? formatDay(dateFilter.fromMs)
+      : `${formatDayShort(dateFilter.fromMs)} – ${formatDayShort(dateFilter.toMs)}`
+    : null;
+  const filterLabel = dateFilter
+    ? dateFilter.mode === 'single' || dateFilter.fromMs === dateFilter.toMs
+      ? formatDay(dateFilter.fromMs)
+      : `${formatDay(dateFilter.fromMs)} to ${formatDay(dateFilter.toMs)}`
+    : range === 'all'
+      ? 'all'
+      : rangeLabel;
+
+  const filteredTotal = filtered.reduce((sum, r) => sum + r.grandTotal, 0);
+  const pendingCount = filtered.filter((r) => r.status === 'pending').length;
+
+  const sections = useMemo<BillSection[]>(() => {
+    const byDay = new Map<string, BillSection>();
+    for (const record of filtered) {
+      const key = new Date(startOfDay(record.createdAtMs)).toISOString();
+      const section = byDay.get(key) ?? {
+        key,
+        title: dayHeading(record.createdAtMs),
+        count: 0,
+        total: 0,
+        data: [],
+      };
+      section.count += 1;
+      section.total += record.grandTotal;
+      section.data.push(record);
+      byDay.set(key, section);
+    }
+    return [...byDay.values()];
+  }, [filtered]);
+
   const recordToInvoice = (r: InvoiceRecord): Invoice => ({
     number: r.number,
     type: r.type,
     customer: { name: r.customerName, phone: r.customerPhone },
     items: r.items,
     subtotal: r.subtotal,
+    discount: r.discount,
     gst: r.gst,
     grandTotal: r.grandTotal,
     createdAt: new Date(r.createdAtMs).toISOString(),
+    referral:
+      r.referralCode && r.referralName
+        ? { code: r.referralCode, name: r.referralName }
+        : undefined,
   });
 
   const guard = async (r: InvoiceRecord, action: () => Promise<void>) => {
@@ -102,144 +269,106 @@ export default function BillsTab() {
     });
 
   const onDelete = (r: InvoiceRecord) => {
-    Alert.alert('Delete this bill?', `${r.number} (${formatINRShort(r.grandTotal)}) will be removed from this device.`, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () =>
-          void guard(r, async () => {
-            await deleteInvoice(r.id);
-            showToast('Bill deleted');
-            void reload();
-          }),
-      },
-    ]);
+    Alert.alert(
+      'Delete this bill?',
+      `${r.number} (${formatINRShort(r.grandTotal)}) will be removed from this device.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () =>
+            void guard(r, async () => {
+              await deleteInvoice(r.id);
+              showToast('Bill deleted');
+              void reload();
+            }),
+        },
+      ],
+    );
   };
 
-  const renderItem = ({ item }: { item: InvoiceRecord }) => (
-    <View style={[styles.card, cardShadow]}>
-      <View style={styles.cardTop}>
-        <Image source={require('../../assets/logo.png')} style={styles.cardLogo} resizeMode="contain" />
-        <View style={styles.cardHeader}>
+  const onExport = async () => {
+    setExporting(true);
+    try {
+      await exportBillsToCsv(filtered, filterLabel);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const renderItem = ({ item }: { item: InvoiceRecord }) => {
+    const uploaded = item.status === 'uploaded';
+    return (
+      <View style={[styles.card, cardShadow]}>
+        <View style={styles.cardTop}>
           <Text style={styles.billNumber}>{item.number}</Text>
-          <Text style={styles.billDate}>{formatDateTime(new Date(item.createdAtMs).toISOString())}</Text>
-        </View>
-        <View
-          style={[
-            styles.statusChip,
-            item.status === 'uploaded' ? styles.statusUploaded : styles.statusPending,
-          ]}
-        >
-          <Text
-            style={[
-              styles.statusText,
-              item.status === 'uploaded' ? styles.statusTextUploaded : styles.statusTextPending,
-            ]}
-          >
-            {item.status === 'uploaded' ? 'Uploaded' : 'Pending'}
+          <View style={[styles.statusChip, uploaded ? styles.statusUploaded : styles.statusPending]}>
+            <Text
+              style={[styles.statusText, uploaded ? styles.statusTextUploaded : styles.statusTextPending]}
+            >
+              {uploaded ? 'Uploaded' : 'Pending'}
+            </Text>
+          </View>
+          <Text style={styles.total} numberOfLines={1}>
+            {formatINRShort(item.grandTotal)}
           </Text>
         </View>
-      </View>
 
-      <View style={styles.cardBody}>
-        <View style={styles.infoCol}>
-          <Text style={styles.customerName}>{item.customerName}</Text>
-          <Text style={styles.customerPhone}>+91 {item.customerPhone}</Text>
-          <Text style={styles.itemCount}>
-            {item.items.length} item{item.items.length === 1 ? '' : 's'}
-            {item.type === 'referral' ? ' · Referral +10%' : ''}
-          </Text>
-        </View>
-        <Text style={styles.total}>{formatINRShort(item.grandTotal)}</Text>
-      </View>
+        <Text style={styles.cardMeta} numberOfLines={1}>
+          {item.customerName} · {item.items.length} item{item.items.length === 1 ? '' : 's'} ·{' '}
+          {formatTime(item.createdAtMs)}
+          {item.discount > 0 ? ` · Discount ${formatINRShort(item.discount)}` : ''}
+        </Text>
 
-      {/* Two rows of two equal buttons. A single row of four overflowed on
-          narrow phones, which pushed the delete button out of line. */}
-      <View style={styles.actions}>
-        <View style={styles.actionRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Share ${item.number} on WhatsApp`}
+        <View style={styles.actions}>
+          <ActionButton
+            icon="message-circle"
+            label="WhatsApp"
+            color={colors.primary}
+            accessibilityLabel={`Send ${item.number} on WhatsApp`}
             onPress={() => void onShareWhatsApp(item)}
-            style={({ pressed }) => [
-              styles.actionBtn,
-              styles.actionBtnPrimary,
-              pressed && styles.actionPressed,
-            ]}
-          >
-            {busyNumber === item.number ? (
-              <ActivityIndicator size="small" color={colors.textOnPrimary} />
-            ) : (
-              <>
-                <Ionicons name="chatbubble-ellipses" size={17} color={colors.textOnPrimary} />
-                <Text
-                  style={[styles.actionLabel, styles.actionLabelPrimary]}
-                  numberOfLines={1}
-                >
-                  WhatsApp
-                </Text>
-              </>
-            )}
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
+            busy={busyNumber === item.number}
+          />
+          <ActionButton
+            icon="share-2"
+            label="PDF"
+            color={colors.primary}
             accessibilityLabel={`Share ${item.number} PDF`}
             onPress={() => void onSharePdf(item)}
-            style={({ pressed }) => [styles.actionBtn, pressed && styles.actionPressed]}
-          >
-            <Feather name="share-2" size={17} color={colors.primary} />
-            <Text style={styles.actionLabel} numberOfLines={1}>
-              Share PDF
-            </Text>
-          </Pressable>
-        </View>
-
-        <View style={styles.actionRow}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Mark ${item.number} as ${item.status === 'uploaded' ? 'pending' : 'uploaded'}`}
+          />
+          <ActionButton
+            icon="edit-2"
+            label="Edit"
+            color={colors.primary}
+            accessibilityLabel={`Edit ${item.number}`}
+            onPress={() => router.push({ pathname: '/edit-bill', params: { id: item.id } })}
+          />
+          <ActionButton
+            icon={uploaded ? 'rotate-ccw' : 'check-circle'}
+            label={uploaded ? 'Undo' : 'Upload'}
+            color={uploaded ? colors.textMuted : colors.gold}
+            accessibilityLabel={`Mark ${item.number} as ${uploaded ? 'pending' : 'uploaded'}`}
             onPress={() => void onToggleUploaded(item)}
-            style={({ pressed }) => [
-              styles.actionBtn,
-              item.status === 'uploaded' && styles.actionBtnMuted,
-              pressed && styles.actionPressed,
-            ]}
-          >
-            <Feather
-              name={item.status === 'uploaded' ? 'rotate-ccw' : 'check-circle'}
-              size={17}
-              color={item.status === 'uploaded' ? colors.textMuted : colors.primary}
-            />
-            <Text
-              style={[
-                styles.actionLabel,
-                item.status === 'uploaded' && styles.actionLabelMuted,
-              ]}
-              numberOfLines={1}
-            >
-              {item.status === 'uploaded' ? 'Undo upload' : 'Mark uploaded'}
-            </Text>
-          </Pressable>
-
-          <Pressable
-            accessibilityRole="button"
+          />
+          <ActionButton
+            icon="trash-2"
+            label="Delete"
+            color={colors.danger}
             accessibilityLabel={`Delete ${item.number}`}
             onPress={() => onDelete(item)}
-            style={({ pressed }) => [
-              styles.actionBtn,
-              styles.actionBtnDanger,
-              pressed && styles.actionPressed,
-            ]}
-          >
-            <Feather name="trash-2" size={17} color={colors.danger} />
-            <Text style={[styles.actionLabel, styles.actionLabelDanger]} numberOfLines={1}>
-              Delete
-            </Text>
-          </Pressable>
+          />
         </View>
       </View>
+    );
+  };
+
+  const renderSectionHeader = ({ section }: { section: BillSection }) => (
+    <View style={styles.sectionHeader}>
+      <Text style={styles.sectionTitle}>{section.title}</Text>
+      <Text style={styles.sectionMeta} numberOfLines={1}>
+        {section.count} bill{section.count === 1 ? '' : 's'} · {formatINRShort(section.total)}
+      </Text>
     </View>
   );
 
@@ -247,12 +376,78 @@ export default function BillsTab() {
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
       <View style={styles.header}>
         <View style={styles.titleRow}>
-          <Ionicons name="receipt" size={22} color={colors.primary} />
+          <Feather name="file-text" size={21} color={colors.primary} />
           <Text style={styles.title}>Bills & Sales</Text>
         </View>
         <Text style={styles.subtitle}>
-          Bills older than {RETENTION_DAYS} days are deleted automatically
+          Saved bills stay until you delete them · filter by any date or range
         </Text>
+      </View>
+
+      <View style={styles.filterWrap}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+          keyboardShouldPersistTaps="handled"
+        >
+          {RANGES.map((item) => {
+            const active = !dateFilter && range === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => {
+                  setDateFilter(null);
+                  setRange(item.key);
+                }}
+                style={({ pressed }) => [
+                  styles.filterChip,
+                  active && styles.filterChipActive,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pick a specific date or a date range"
+            accessibilityState={{ selected: Boolean(dateFilter) }}
+            onPress={() => setSheetOpen(true)}
+            style={({ pressed }) => [
+              styles.filterChip,
+              styles.dateChip,
+              dateFilter && styles.filterChipActive,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Feather
+              name="calendar"
+              size={13}
+              color={dateFilter ? colors.textOnPrimary : colors.primary}
+            />
+            <Text style={[styles.filterText, dateFilter && styles.filterTextActive]}>
+              {dateLabel ?? 'Date'}
+            </Text>
+            {dateFilter ? (
+              <Pressable
+                onPress={() => setDateFilter(null)}
+                hitSlop={10}
+                accessibilityLabel="Clear the date filter"
+              >
+                <Feather name="x" size={13} color={colors.textOnPrimary} />
+              </Pressable>
+            ) : (
+              <Feather name="chevron-down" size={13} color={colors.primary} />
+            )}
+          </Pressable>
+        </ScrollView>
       </View>
 
       {loading ? (
@@ -263,22 +458,45 @@ export default function BillsTab() {
         <EmptyState
           icon="file-text"
           title="No bills yet"
-          subtitle="Every bill you generate is saved here for 30 days with a Pending status until you mark it Uploaded."
+          subtitle="Every bill you generate is saved here with a Pending status until you mark it Uploaded."
+        />
+      ) : filtered.length === 0 ? (
+        <EmptyState
+          icon="calendar"
+          title="No bills for this date"
+          subtitle="Try another day, a From – To range, or one of the quick filters."
+          actionLabel="Reset filter"
+          onAction={() => {
+            setDateFilter(null);
+            setRange('all');
+          }}
         />
       ) : (
         <>
-          <View style={styles.summaryRow}>
-            <Text style={styles.summaryText}>
-              {records.length} saved bill{records.length === 1 ? '' : 's'}
-            </Text>
-            <Text style={styles.summaryText}>
-              {records.filter((r) => r.status === 'pending').length} pending
-            </Text>
+          <View style={styles.toolbar}>
+            <View style={styles.toolbarLeft}>
+              <Text style={styles.toolbarText} numberOfLines={1}>
+                {filtered.length} bill{filtered.length === 1 ? '' : 's'} ·{' '}
+                {dateFilter ? dateLabel : rangeLabel}
+                {pendingCount > 0 ? ` · ${pendingCount} pending` : ''}
+              </Text>
+              <Text style={styles.toolbarTotal}>{formatINR(filteredTotal)}</Text>
+            </View>
+            <PrimaryButton
+              title={exporting ? '…' : `Excel (${filtered.length})`}
+              small
+              icon="download"
+              onPress={() => void onExport()}
+              disabled={exporting}
+            />
           </View>
-          <FlatList
-            data={records}
+
+          <SectionList
+            sections={sections}
             keyExtractor={(r) => r.id}
             renderItem={renderItem}
+            renderSectionHeader={renderSectionHeader}
+            stickySectionHeadersEnabled={false}
             contentContainerStyle={styles.list}
             showsVerticalScrollIndicator={false}
           />
@@ -294,6 +512,16 @@ export default function BillsTab() {
           onPress={() => void reload()}
         />
       </View>
+
+      <DateFilterSheet
+        visible={sheetOpen}
+        initial={dateFilter}
+        onClose={() => setSheetOpen(false)}
+        onApply={(value) => {
+          setDateFilter(value);
+          if (value) setRange('all');
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -321,158 +549,148 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     color: colors.textMuted,
   },
-  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  summaryRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
+  filterWrap: { paddingTop: spacing.xs },
+  filterRow: {
     paddingHorizontal: spacing.md,
-    paddingVertical: spacing.xs,
+    gap: spacing.sm,
+    alignItems: 'center',
   },
-  summaryText: {
-    fontFamily: fonts.semiBold,
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    minHeight: 36,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    justifyContent: 'center',
+  },
+  dateChip: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  filterChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
+  filterText: {
+    fontFamily: fonts.medium,
     fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
+  filterTextActive: { color: colors.textOnPrimary },
+  loadingWrap: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  toolbar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.sm + 2,
+    paddingBottom: spacing.xs,
+  },
+  toolbarLeft: { flex: 1 },
+  toolbarText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
+  toolbarTotal: {
+    fontFamily: fonts.bold,
+    fontSize: fontSize.md,
     color: colors.primary,
   },
   list: {
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.sm,
   },
+  sectionHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    paddingTop: spacing.sm + 2,
+    paddingBottom: spacing.xs + 2,
+  },
+  sectionTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs,
+    color: colors.primary,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+  },
+  sectionMeta: {
+    flexShrink: 0,
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs - 1,
+    color: colors.textMuted,
+  },
   card: {
     backgroundColor: colors.card,
     borderRadius: radius.md,
-    padding: spacing.sm + 4,
-    marginTop: spacing.sm,
+    paddingHorizontal: spacing.sm + 4,
+    paddingTop: spacing.sm + 2,
+    paddingBottom: spacing.sm,
+    marginBottom: spacing.sm,
   },
   cardTop: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  cardLogo: {
-    width: 34,
-    height: 34,
-    borderRadius: 8,
-    backgroundColor: colors.accentSoft,
-  },
-  cardHeader: {
-    flex: 1,
-    marginLeft: spacing.sm + 2,
+    gap: spacing.sm,
   },
   billNumber: {
     fontFamily: fonts.semiBold,
     fontSize: fontSize.sm + 1,
     color: colors.text,
   },
-  billDate: {
-    fontFamily: fonts.regular,
-    fontSize: fontSize.xs - 1,
-    color: colors.textMuted,
-    marginTop: 1,
-  },
   statusChip: {
-    flexShrink: 0,
     borderRadius: radius.pill,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
   },
-  statusPending: {
-    backgroundColor: colors.goldSoft,
-  },
-  statusUploaded: {
-    backgroundColor: colors.accent,
-  },
+  statusPending: { backgroundColor: colors.goldSoft },
+  statusUploaded: { backgroundColor: colors.accentSoft },
   statusText: {
     fontFamily: fonts.semiBold,
     fontSize: fontSize.xs - 2,
-    letterSpacing: 0.5,
+    letterSpacing: 0.4,
   },
-  statusTextPending: {
-    color: colors.gold,
-  },
-  statusTextUploaded: {
-    color: colors.textOnPrimary,
-  },
-  cardBody: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
-    marginTop: spacing.sm + 2,
-    paddingTop: spacing.sm + 2,
-    borderTopWidth: StyleSheet.hairlineWidth,
-    borderTopColor: colors.divider,
-  },
-  infoCol: { flex: 1 },
-  customerName: {
-    fontFamily: fonts.medium,
-    fontSize: fontSize.sm,
-    color: colors.text,
-  },
-  customerPhone: {
-    fontFamily: fonts.regular,
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginTop: 1,
-  },
-  itemCount: {
-    fontFamily: fonts.regular,
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
-    marginTop: 3,
-  },
+  statusTextPending: { color: colors.gold },
+  statusTextUploaded: { color: colors.primary },
   total: {
+    flex: 1,
+    textAlign: 'right',
     fontFamily: fonts.bold,
-    fontSize: fontSize.lg,
+    fontSize: fontSize.md + 1,
     color: colors.primary,
   },
-  actions: {
-    marginTop: spacing.sm + 4,
-    gap: spacing.sm,
+  cardMeta: {
+    marginTop: 2,
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
   },
-  actionRow: {
+  actions: {
     flexDirection: 'row',
-    alignItems: 'stretch',
-    gap: spacing.sm,
+    gap: 5,
+    marginTop: spacing.sm,
   },
   actionBtn: {
     flex: 1,
-    flexDirection: 'row',
+    minHeight: 42,
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    minHeight: 44,
-    paddingHorizontal: spacing.sm,
+    gap: 2,
     borderRadius: radius.sm,
-    backgroundColor: colors.accentSoft,
+    backgroundColor: colors.background,
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
   },
-  actionBtnPrimary: {
-    backgroundColor: colors.primary,
-  },
-  actionBtnMuted: {
-    backgroundColor: colors.divider,
-  },
-  actionBtnDanger: {
-    backgroundColor: colors.dangerSoft,
-  },
-  actionPressed: {
-    opacity: 0.85,
-  },
+  actionPressed: { opacity: 0.7 },
   actionLabel: {
-    flexShrink: 1,
     fontFamily: fonts.semiBold,
-    fontSize: fontSize.xs,
-    color: colors.text,
-  },
-  actionLabelPrimary: {
-    color: colors.textOnPrimary,
-  },
-  actionLabelMuted: {
-    color: colors.textMuted,
-  },
-  actionLabelDanger: {
-    color: colors.danger,
+    fontSize: fontSize.xs - 2,
+    letterSpacing: 0.2,
   },
   footerWrap: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.xs,
     paddingBottom: 4,
+    alignItems: 'center',
   },
 });

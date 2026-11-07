@@ -1,31 +1,38 @@
 /**
  * Cart screen — single screen used by both carts via the `type` param
- * ("home" | "referral"). Shows items, bill summary, customer details and
- * generates the invoice. Each cart is validated against its own fields only.
+ * ("home" | "referral"). Shows items, optional discount, bill summary,
+ * customer details and generates the invoice.
+ *
+ * In the referral cart the customer is still entered by the owner (name +
+ * phone, exactly like a home sale). The active referral partner is attached
+ * to the bill as a referral, and 10% of it is credited to that partner.
  */
 
-import { Ionicons } from '@expo/vector-icons';
+import { Feather, Ionicons } from '@expo/vector-icons';
 import { router, useLocalSearchParams } from 'expo-router';
 import React, { useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   View,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
-import { TextInput } from 'react-native';
 import theme from '../constants/theme';
 import { computeTotals } from '../utils/pricing';
 import { useHomeCart } from '../store/homeCartStore';
 import { useReferralCart } from '../store/referralCartStore';
 import { useInvoiceCounter } from '../store/invoiceStore';
+import { useReferralSession } from '../store/referralSession';
 import type { CartItem, CartType, CustomerFormValues, Invoice } from '../types';
 import CartItemRow from '../components/CartItem';
 import QuantityEntryModal from '../components/QuantityEntryModal';
@@ -33,6 +40,7 @@ import EmptyState from '../components/EmptyState';
 import PrimaryButton from '../components/PrimaryButton';
 import SummaryCard from '../components/SummaryCard';
 import { showToast } from '../components/Toast';
+import { formatINR } from '../utils/format';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -53,8 +61,18 @@ export default function CartScreen() {
 
   // Each type maps to ITS OWN store — no shared state between the flows.
   const items = useHomeCart((s) => s.items);
+  const homeDiscount = useHomeCart((s) => s.discount);
   const referralItems = useReferralCart((s) => s.items);
+  const referralDiscount = useReferralCart((s) => s.discount);
   const cartItems = type === 'referral' ? referralItems : items;
+  const discount = (type === 'referral' ? referralDiscount : homeDiscount) ?? 0;
+
+  const activeReferral = useReferralSession((s) => s.active);
+  /**
+   * The partner is only credited on the bill (10%) — the customer is still
+   * the person buying, so the customer form stays available.
+   */
+  const referralPartner = type === 'referral' ? activeReferral : null;
 
   const {
     control,
@@ -66,10 +84,12 @@ export default function CartScreen() {
     mode: 'onChange',
   });
 
-  const totals = useMemo(() => computeTotals(cartItems), [cartItems]);
+  const totals = useMemo(() => computeTotals(cartItems, discount), [cartItems, discount]);
   const insets = useSafeAreaInsets();
   /** Weight line being re-typed (grams / ₹ amount); null when the sheet is closed. */
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
+  /** Raw text in the discount box, so the owner can type "50." without it jumping. */
+  const [discountText, setDiscountText] = useState(discount > 0 ? String(discount) : '');
 
   const cartApi = type === 'referral' ? useReferralCart : useHomeCart;
 
@@ -82,30 +102,56 @@ export default function CartScreen() {
         onPress: () => {
           if (type === 'referral') useReferralCart.getState().clearCart();
           else useHomeCart.getState().clearCart();
+          setDiscountText('');
           showToast('Cart cleared');
         },
       },
     ]);
   };
 
-  const onGenerateBill = handleSubmit(({ name, phone }: CustomerFormValues) => {
-    const phoneDigits = phone.replace(/\D/g, '').replace(/^(91|0)/, '');
-    const customer = { name: name.trim(), phone: phoneDigits };
+  const onDiscountChange = (text: string) => {
+    // Digits and at most one decimal point.
+    const cleaned = text.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
+    setDiscountText(cleaned);
+    const value = Number.parseFloat(cleaned);
+    cartApi.getState().setDiscount(Number.isFinite(value) ? value : 0);
+  };
+
+  const buildInvoice = (rawName: string, rawPhone: string) => {
+    if (cartItems.length === 0) return;
+    const phoneDigits = rawPhone.replace(/\D/g, '').replace(/^(91|0)/, '');
     const invoice: Invoice = {
       number: useInvoiceCounter.getState().nextInvoiceNumber(),
       type,
-      customer,
+      customer: { name: rawName.trim(), phone: phoneDigits },
       items: cartItems.map((it) => ({ ...it })),
       subtotal: totals.subtotal,
+      discount: totals.discount,
       gst: totals.gst,
       grandTotal: totals.grandTotal,
       createdAt: new Date().toISOString(),
+      referral:
+        type === 'referral' && referralPartner
+          ? { code: referralPartner.code, name: referralPartner.name }
+          : undefined,
     };
-    // Pass the snapshot safely through URL params.
     router.push({ pathname: '/bill', params: { data: JSON.stringify(invoice) } });
-  });
+  };
 
-  const canGenerate = isValid && cartItems.length > 0;
+  /** Changing partner means picking (or typing) a different referral ID. */
+  const onChangePartner = () => {
+    useReferralSession.getState().clearActive();
+    router.push('/(tabs)/referral');
+  };
+
+  const onGenerateBill = () => {
+    if (cartItems.length === 0) return;
+    void handleSubmit(({ name, phone }: CustomerFormValues) => buildInvoice(name, phone))();
+  };
+
+  const canGenerate =
+    cartItems.length > 0 && isValid && (type !== 'referral' || Boolean(referralPartner));
+  const discountTooBig = discount > totals.subtotal;
 
   if (cartItems.length === 0) {
     return (
@@ -147,11 +193,16 @@ export default function CartScreen() {
         />
       ) : null}
 
-      <ScrollView
-        contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 120 }]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
+        <ScrollView
+          contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 120 }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        >
         <FlatList
           scrollEnabled={false}
           data={cartItems as CartItem[]}
@@ -175,73 +226,161 @@ export default function CartScreen() {
         />
 
         <Text style={styles.sectionTitle}>Bill Summary</Text>
-        <SummaryCard subtotal={totals.subtotal} gst={totals.gst} grandTotal={totals.grandTotal} />
+
+        {/* Discount — a flat ₹ amount taken off the subtotal before GST. */}
+        <View style={[styles.discountCard, cardShadow]}>
+          <View style={styles.discountLeft}>
+            <Feather name="tag" size={16} color={colors.gold} />
+            <View style={styles.discountTextWrap}>
+              <Text style={styles.discountLabel}>Discount</Text>
+              <Text style={styles.discountHint}>Taken off before GST</Text>
+            </View>
+          </View>
+          <View style={[styles.discountInputWrap, discountTooBig && styles.discountInputError]}>
+            <Text style={styles.rupee}>₹</Text>
+            <TextInput
+              value={discountText}
+              onChangeText={onDiscountChange}
+              placeholder="0"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="decimal-pad"
+              style={styles.discountInput}
+              maxLength={8}
+              accessibilityLabel="Discount amount in rupees"
+            />
+          </View>
+        </View>
+        {discountTooBig ? (
+          <Text style={styles.discountWarn}>
+            Discount can't be more than the subtotal ({formatINR(totals.subtotal)}).
+          </Text>
+        ) : null}
+
+        <SummaryCard
+          subtotal={totals.subtotal}
+          discount={totals.discount}
+          gst={totals.gst}
+          grandTotal={totals.grandTotal}
+        />
 
         <Text style={styles.sectionTitle}>Customer Details</Text>
-        <View style={[styles.customerCard, cardShadow]}>
-          <Controller
-            control={control}
-            name="name"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <View style={styles.field}>
-                <Text style={styles.label}>Customer name</Text>
-                <View style={[styles.inputWrap, Boolean(errors.name) && { borderColor: colors.danger }]}>
-                  <TextInput
-                    value={value}
-                    onChangeText={onChange}
-                    onBlur={onBlur}
-                    placeholder="e.g. Ramesh Kumar"
-                    placeholderTextColor={colors.textMuted}
-                    style={styles.input}
-                    returnKeyType="next"
-                  />
-                </View>
-                {errors.name ? <Text style={styles.error}>{errors.name.message}</Text> : null}
-              </View>
-            )}
-          />
-          <Controller
-            control={control}
-            name="phone"
-            render={({ field: { onChange, onBlur, value } }) => (
-              <View>
-                <Text style={styles.label}>Phone number (WhatsApp)</Text>
-                <View style={[styles.inputWrap, Boolean(errors.phone) && { borderColor: colors.danger }]}>
-                  <Text style={styles.prefix}>+91</Text>
-                  <TextInput
-                    value={value}
-                    onChangeText={(v) => onChange(v.replace(/\D/g, '').slice(0, 10))}
-                    onBlur={onBlur}
-                    placeholder="9876543210"
-                    placeholderTextColor={colors.textMuted}
-                    style={styles.input}
-                    keyboardType="phone-pad"
-                    returnKeyType="done"
-                    maxLength={10}
-                  />
-                </View>
-                {errors.phone ? <Text style={styles.error}>{errors.phone.message}</Text> : null}
-              </View>
-            )}
-          />
-        </View>
-      </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
-        <PrimaryButton
-          title={`Generate Bill · ₹${totals.grandTotal.toFixed(2)}`}
-          onPress={onGenerateBill}
-          disabled={!canGenerate}
-          icon="file-text"
-        />
-        <Text style={styles.hint}>
-          {cartItems.length === 0
-            ? 'Add items to the cart first.'
-            : !isValid
-              ? 'Enter the customer name and a valid 10-digit mobile number.'
-              : 'Ready to create the invoice.'}
-        </Text>
-      </View>
+        {/* Who earns the 10% — the customer below is still entered by hand. */}
+        {type === 'referral' ? (
+          referralPartner ? (
+            <View style={[styles.partnerStrip, cardShadow]}>
+              <View style={styles.partnerAvatar}>
+                <Text style={styles.partnerAvatarText}>
+                  {referralPartner.name.trim().charAt(0).toUpperCase() || '?'}
+                </Text>
+              </View>
+              <View style={styles.partnerInfo}>
+                <Text style={styles.partnerName} numberOfLines={1}>
+                  {referralPartner.name}
+                </Text>
+                <View style={styles.partnerMetaRow}>
+                  <View style={styles.partnerCode}>
+                    <Text style={styles.partnerCodeText}>{referralPartner.code}</Text>
+                  </View>
+                  <Text style={styles.partnerNote} numberOfLines={1}>
+                    10% · {formatINR(totals.grandTotal * 0.1)}
+                  </Text>
+                </View>
+              </View>
+              <Pressable
+                onPress={onChangePartner}
+                accessibilityRole="button"
+                accessibilityLabel="Change referral partner"
+                hitSlop={8}
+                style={styles.changeBtn}
+              >
+                <Text style={styles.changeText}>Change</Text>
+              </Pressable>
+            </View>
+          ) : (
+            <View style={[styles.customerCard, cardShadow]}>
+              <Text style={styles.noPartnerTitle}>No referral partner selected</Text>
+              <Text style={styles.noPartnerText}>
+                Enter a referral ID on the Referral tab so this sale credits a partner's 10%.
+              </Text>
+              <PrimaryButton
+                title="Enter referral ID"
+                small
+                icon="users"
+                onPress={() => router.push('/(tabs)/referral')}
+                style={styles.noPartnerBtn}
+              />
+            </View>
+          )
+        ) : null}
+
+        <View style={[styles.customerCard, cardShadow]}>
+            <Controller
+              control={control}
+              name="name"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <View style={styles.field}>
+                  <Text style={styles.label}>Customer name</Text>
+                  <View style={[styles.inputWrap, Boolean(errors.name) && { borderColor: colors.danger }]}>
+                    <TextInput
+                      value={value}
+                      onChangeText={onChange}
+                      onBlur={onBlur}
+                      placeholder="e.g. Ramesh Kumar"
+                      placeholderTextColor={colors.textMuted}
+                      style={styles.input}
+                      returnKeyType="next"
+                    />
+                  </View>
+                  {errors.name ? <Text style={styles.error}>{errors.name.message}</Text> : null}
+                </View>
+              )}
+            />
+            <Controller
+              control={control}
+              name="phone"
+              render={({ field: { onChange, onBlur, value } }) => (
+                <View>
+                  <Text style={styles.label}>Phone number (WhatsApp)</Text>
+                  <View style={[styles.inputWrap, Boolean(errors.phone) && { borderColor: colors.danger }]}>
+                    <Text style={styles.prefix}>+91</Text>
+                    <TextInput
+                      value={value}
+                      onChangeText={(v) => onChange(v.replace(/\D/g, '').slice(0, 10))}
+                      onBlur={onBlur}
+                      placeholder="9876543210"
+                      placeholderTextColor={colors.textMuted}
+                      style={styles.input}
+                      keyboardType="phone-pad"
+                      returnKeyType="done"
+                      maxLength={10}
+                    />
+                  </View>
+                  {errors.phone ? <Text style={styles.error}>{errors.phone.message}</Text> : null}
+                </View>
+              )}
+            />
+          </View>
+        </ScrollView>
+
+        <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
+          <PrimaryButton
+            title={`Generate Bill · ${formatINR(totals.grandTotal)}`}
+            onPress={onGenerateBill}
+            disabled={!canGenerate}
+            icon="file-text"
+          />
+          <Text style={styles.hint}>
+            {cartItems.length === 0
+              ? 'Add items to the cart first.'
+              : type === 'referral' && !referralPartner
+                ? 'Select a referral partner on the Referral tab first.'
+                : !isValid
+                  ? 'Enter the customer name and a valid 10-digit mobile number.'
+                  : 'Ready to create the invoice.'}
+          </Text>
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -268,6 +407,9 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  flex: {
+    flex: 1,
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -293,6 +435,70 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase',
     marginTop: spacing.md,
     marginBottom: spacing.sm,
+  },
+  discountCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 2,
+    marginBottom: spacing.sm,
+  },
+  discountLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+  },
+  discountTextWrap: { flex: 1 },
+  discountLabel: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.sm,
+    color: colors.text,
+  },
+  discountHint: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs - 1,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  discountInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minWidth: 104,
+    maxWidth: 140,
+    flexShrink: 1,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.sm + 2,
+    minHeight: 44,
+  },
+  discountInputError: { borderColor: colors.danger },
+  rupee: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.md,
+    color: colors.textMuted,
+    marginRight: 3,
+  },
+  discountInput: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.md,
+    color: colors.text,
+    padding: 0,
+    textAlign: 'right',
+  },
+  discountWarn: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
+    color: colors.danger,
+    marginBottom: spacing.sm,
+    marginTop: -2,
   },
   customerCard: {
     backgroundColor: colors.card,
@@ -337,6 +543,91 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontFamily: fonts.regular,
   },
+  partnerStrip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.goldSoft,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm + 4,
+    paddingVertical: spacing.sm + 2,
+    marginBottom: spacing.sm,
+  },
+  partnerMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 3,
+  },
+  changeBtn: {
+    flexShrink: 0,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+    borderColor: colors.gold,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+  },
+  changeText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs - 1,
+    color: colors.gold,
+  },
+  partnerAvatar: {
+    width: 42,
+    height: 42,
+    borderRadius: radius.pill,
+    backgroundColor: colors.accentSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  partnerAvatarText: {
+    fontFamily: fonts.bold,
+    fontSize: fontSize.md,
+    color: colors.primary,
+  },
+  partnerInfo: { flex: 1 },
+  partnerName: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.md,
+    color: colors.text,
+  },
+  partnerPhone: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  partnerCode: {
+    flexShrink: 0,
+    backgroundColor: colors.primary,
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  partnerCodeText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs - 2,
+    color: colors.textOnPrimary,
+    letterSpacing: 0.5,
+  },
+  partnerNote: {
+    flexShrink: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs - 1,
+    color: colors.gold,
+  },
+  noPartnerTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.md,
+    color: colors.text,
+  },
+  noPartnerText: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  noPartnerBtn: { marginTop: spacing.md },
   footer: {
     paddingHorizontal: spacing.md,
     backgroundColor: colors.background,

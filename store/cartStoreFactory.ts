@@ -11,6 +11,9 @@ import type { CartItem, Product } from '../types';
 
 interface CartState {
   items: CartItem[];
+  /** Flat discount (₹) applied to this cart only; reset when the cart clears. */
+  discount: number;
+  setDiscount: (amount: number) => void;
   /** Adds `quantity` units of `product` at the FINAL unit price for this flow. */
   addToCart: (product: Product, quantity: number, unitPrice: number) => void;
   setQuantity: (productId: string, quantity: number) => void;
@@ -37,6 +40,11 @@ export function createCartStore(storageKey: string): CartStore {
     persist(
       (set) => ({
         items: [],
+        discount: 0,
+
+        /** Stores a 2-decimal discount; negative input is treated as 0. */
+        setDiscount: (amount) =>
+          set({ discount: Math.max(0, Math.round((amount || 0) * 100) / 100) }),
 
         addToCart: (product, quantity, unitPrice) =>
           set((state) => {
@@ -92,7 +100,7 @@ export function createCartStore(storageKey: string): CartStore {
         removeItem: (productId) =>
           set((state) => ({ items: state.items.filter((it) => it.productId !== productId) })),
 
-        clearCart: () => set({ items: [] }),
+        clearCart: () => set({ items: [], discount: 0 }),
       }),
       {
         name: storageKey,

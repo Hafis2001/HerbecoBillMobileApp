@@ -14,6 +14,7 @@ import {
   Modal,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -121,13 +122,20 @@ export function QuantityEntryModal({
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <KeyboardAvoidingView
         style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
         <Pressable style={styles.backdropTouch} onPress={onClose} accessibilityLabel="Close" />
 
         <View style={[styles.sheet, cardShadow]}>
           <View style={styles.grabber} />
 
+          <ScrollView
+            style={styles.sheetScroll}
+            contentContainerStyle={styles.sheetScrollContent}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+          >
           <Text style={styles.title} numberOfLines={2}>
             {productName}
           </Text>
@@ -206,6 +214,7 @@ export function QuantityEntryModal({
             </View>
             <Text style={styles.summaryTotal}>{valid ? formatINR(lineTotal) : formatINR(0)}</Text>
           </View>
+          </ScrollView>
 
           <PrimaryButton
             title={initialQuantity > 0 ? 'Update cart' : 'Add to cart'}
@@ -238,6 +247,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.md,
     paddingBottom: spacing.lg,
     paddingTop: spacing.sm,
+    maxHeight: '92%',
+  },
+  sheetScroll: {
+    flexShrink: 1,
+  },
+  sheetScrollContent: {
+    paddingBottom: spacing.xs,
   },
   grabber: {
     alignSelf: 'center',

@@ -23,7 +23,9 @@ const { documentDirectory, readAsStringAsync, EncodingType } = FileSystem;
  * It is part of the cached PDF filename, so old copies are never re-used with
  * outdated details.
  */
-const TEMPLATE_VERSION = 'v2';
+// Bumped to v4: bills no longer print the referral badge / "Referral:" line,
+// so cached PDFs from v3 must be regenerated.
+const TEMPLATE_VERSION = 'v4';
 
 /* ------------------------------------------------------------------ */
 /* Logo loading (cached)                                               */
@@ -115,6 +117,20 @@ async function renderPdf(invoice: Invoice): Promise<string> {
   // Fall back to the printer's own temp file (works in a standalone build).
   const { uri } = await Print.printToFileAsync({ html });
   return uri;
+}
+
+/**
+ * Drops the cached PDF for a bill number. Call this after editing a saved
+ * bill, otherwise the old copy on disk would be shared again.
+ */
+export async function invalidateInvoicePdf(invoiceNumber: string): Promise<void> {
+  const path = await pdfCachePath(invoiceNumber);
+  if (!path) return;
+  try {
+    await FileSystem.deleteAsync(path, { idempotent: true });
+  } catch (e) {
+    console.log('could not clear the cached PDF', e);
+  }
 }
 
 /**

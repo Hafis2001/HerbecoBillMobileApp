@@ -48,9 +48,20 @@ export interface Invoice {
   customer: Customer;
   items: CartItem[];
   subtotal: number;
+  /** Flat discount (₹) taken off the subtotal before GST. 0 when none. */
+  discount?: number;
   gst: number;
   grandTotal: number;
   createdAt: string; // ISO date-time
+  /** Referral partner credited with this sale (referral flow only). */
+  referral?: ReferralRef;
+}
+
+/** Minimal referral info carried on a bill. */
+export interface ReferralRef {
+  /** The referral ID typed at the referral gate (upper case). */
+  code: string;
+  name: string;
 }
 
 /** Customer form values (strings, as typed in the form). */
@@ -62,7 +73,7 @@ export interface CustomerFormValues {
 /** Upload status of a saved bill (Bills tab). */
 export type InvoiceStatus = 'pending' | 'uploaded';
 
-/** A saved bill in the local SQLite database (auto-deleted after 30 days). */
+/** A saved bill in the local SQLite database (kept until deleted by hand). */
 export interface InvoiceRecord {
   id: string;
   number: string;
@@ -71,11 +82,56 @@ export interface InvoiceRecord {
   customerPhone: string;
   items: CartItem[];
   subtotal: number;
+  discount: number;
   gst: number;
   grandTotal: number;
-  /** Milliseconds epoch — used for the 30-day auto-purge. */
+  /** Milliseconds epoch — used for the date filters and dashboard. */
   createdAtMs: number;
   status: InvoiceStatus;
   /** Milliseconds epoch, only set once marked uploaded. */
   uploadedAtMs: number | null;
+  /** Referral partner credited with this bill, when it was a referral sale. */
+  referralCode: string | null;
+  referralName: string | null;
+  /** True once the partner's 10% on this bill has been handed over. */
+  commissionPaid: boolean;
+  /** Milliseconds epoch of the payment, only set with `commissionPaid`. */
+  commissionPaidAtMs: number | null;
+}
+
+/** A referral partner saved in Settings → Referrals. */
+export interface ReferralOwner {
+  /** Referral ID the owner types at the referral gate, e.g. "RAJU01". */
+  code: string;
+  name: string;
+  /** 10-digit Indian mobile number, digits only. */
+  phone: string;
+  createdAtMs: number;
+}
+
+/** Totals collected for one referral partner. */
+export interface ReferralStat {
+  bills: number;
+  sales: number;
+  /** 10% of every referral bill, added bill by bill. */
+  earned: number;
+  /** Part of `earned` already marked paid. */
+  paid: number;
+  /** Part of `earned` still to be paid (`earned - paid`). */
+  pending: number;
+}
+
+/** One commission line on a partner's detail page: 10% of a single bill. */
+export interface ReferralCommissionLine {
+  /** Invoice id (= bill number). */
+  id: string;
+  number: string;
+  /** When the customer bought — the bill's date. */
+  purchaseMs: number;
+  /** The bill's grand total. */
+  billAmount: number;
+  /** 10% of `billAmount`. */
+  commission: number;
+  paid: boolean;
+  paidAtMs: number | null;
 }

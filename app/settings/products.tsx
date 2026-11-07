@@ -1,6 +1,8 @@
 /**
- * Products tab — manage the catalogue: search, edit, delete (with confirm)
- * and jump to the Add Product screen.
+ * Settings → Products.
+ *
+ * Pushed from the Settings tab. Add a product, or search the catalogue and
+ * edit / delete an item. Everything here feeds the Home and Referral grids.
  */
 
 import { Feather, Ionicons } from '@expo/vector-icons';
@@ -9,27 +11,31 @@ import React, { useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
 import { formatPriceWithUnit } from '../../utils/format';
 import { useProductStore } from '../../store/productStore';
+import { showToast } from '../../components/Toast';
 import type { Product } from '../../types';
-import AppHeader from '../../components/AppHeader';
 import ProductImage from '../../components/ProductImage';
 import EmptyState from '../../components/EmptyState';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
-export default function ProductsTab() {
+export default function SettingsProductsScreen() {
   const products = useProductStore((s) => s.products);
   const deleteProduct = useProductStore((s) => s.deleteProduct);
   const insets = useSafeAreaInsets();
+  // Keeps the last rows scrollable above the keyboard while searching.
+  const keyboardHeight = useKeyboardHeight();
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
@@ -42,26 +48,35 @@ export default function ProductsTab() {
   const confirmDelete = (product: Product) => {
     Alert.alert(
       'Delete product',
-      `Delete "${product.name}"? This cannot be undone and does not affect existing carts.`,
+      `Delete "${product.name}"? This cannot be undone and does not affect saved bills.`,
       [
         { text: 'Cancel', style: 'cancel' },
-        { text: 'Delete', style: 'destructive', onPress: () => deleteProduct(product.id) },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            deleteProduct(product.id);
+            showToast('Product removed');
+          },
+        },
       ],
     );
   };
 
   return (
-    <View style={styles.screen}>
-      <AppHeader />
-      <View style={styles.titleRow}>
-        <Text style={styles.title}>Products</Text>
+    <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
+      <View style={styles.header}>
+        <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
+          <Ionicons name="chevron-back" size={24} color={colors.text} />
+        </Pressable>
+        <Text style={styles.headerTitle}>Products</Text>
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel="Add product"
           onPress={() => router.push('/add-product')}
-          style={({ pressed }) => [styles.addBtn, cardShadow, pressed && { opacity: 0.85 }]}
-          hitSlop={6}
+          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
         >
-          <Feather name="plus" size={18} color={colors.textOnPrimary} />
+          <Feather name="plus" size={15} color={colors.textOnPrimary} />
           <Text style={styles.addBtnText}>Add</Text>
         </Pressable>
       </View>
@@ -80,10 +95,11 @@ export default function ProductsTab() {
 
       {filtered.length === 0 ? (
         <EmptyState
+          icon="package"
           title={products.length === 0 ? 'No products yet' : 'No products match'}
           subtitle={
             products.length === 0
-              ? 'Add your first product with a photo, unit and price.'
+              ? 'Add your first product with a photo, unit and price. It appears on Home and Referral straight away.'
               : 'Try a different search.'
           }
           actionLabel={products.length === 0 ? 'Add product' : undefined}
@@ -93,8 +109,13 @@ export default function ProductsTab() {
         <FlatList
           data={filtered}
           keyExtractor={(p) => p.id}
-          contentContainerStyle={{ paddingBottom: insets.bottom + spacing.lg }}
+          contentContainerStyle={{
+            paddingBottom:
+              keyboardHeight > 0 ? keyboardHeight + spacing.md : insets.bottom + spacing.lg,
+          }}
           showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           renderItem={({ item }) => (
             <View style={styles.row}>
               <ProductImage uri={item.imageUri} style={styles.thumb} iconSize={22} />
@@ -102,9 +123,7 @@ export default function ProductsTab() {
                 <Text style={styles.rowName} numberOfLines={1}>
                   {item.name}
                 </Text>
-                <Text style={styles.rowMeta}>
-                  {formatPriceWithUnit(item.price, item.unit)}
-                </Text>
+                <Text style={styles.rowMeta}>{formatPriceWithUnit(item.price, item.unit)}</Text>
                 <View style={styles.tag}>
                   <Text style={styles.tagText}>{item.unit === 'kg' ? 'Kg' : 'Unit'}</Text>
                 </View>
@@ -129,35 +148,34 @@ export default function ProductsTab() {
           )}
         />
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  titleRow: {
+  screen: { flex: 1, backgroundColor: colors.background },
+  header: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    gap: spacing.sm,
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.sm,
+    paddingVertical: spacing.sm,
+    minHeight: 56,
   },
-  title: {
-    fontFamily: fonts.bold,
-    fontSize: fontSize.xl,
+  headerTitle: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.lg,
     color: colors.text,
   },
   addBtn: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.primary,
-    borderRadius: radius.pill,
+    gap: 5,
+    minHeight: 36,
     paddingHorizontal: spacing.md,
-    minHeight: 44,
+    borderRadius: radius.pill,
+    backgroundColor: colors.primary,
   },
   addBtnText: {
     fontFamily: fonts.semiBold,
@@ -193,15 +211,8 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm + 2,
     ...cardShadow,
   },
-  thumb: {
-    width: 56,
-    height: 56,
-    borderRadius: radius.sm,
-  },
-  rowCenter: {
-    flex: 1,
-    marginLeft: spacing.sm + 4,
-  },
+  thumb: { width: 56, height: 56, borderRadius: radius.sm },
+  rowCenter: { flex: 1, marginLeft: spacing.sm + 4 },
   rowName: {
     fontFamily: fonts.semiBold,
     fontSize: fontSize.sm,
@@ -226,10 +237,5 @@ const styles = StyleSheet.create({
     fontSize: 10,
     color: colors.primary,
   },
-  iconBtn: {
-    width: 40,
-    height: 44,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
+  iconBtn: { width: 40, height: 44, alignItems: 'center', justifyContent: 'center' },
 });

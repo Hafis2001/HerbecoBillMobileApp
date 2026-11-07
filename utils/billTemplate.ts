@@ -12,8 +12,8 @@ export const BUSINESS = {
   tagline: 'Pure & Natural Herbal Products',
   address: 'Kinfra, Chundale, Wayanad, PIN 673123',
   phone: '+91 75106 36708',
-  gstin: 'XXXXXXXXXXXXX',
-  email: 'hello@herbeco.in',
+  gstin: '32FURPM3650J2Z7',
+  email: 'herbecospices@gmail.com',
 } as const;
 
 const esc = (s: string): string =>
@@ -38,8 +38,13 @@ export function buildInvoiceHtml(invoice: Invoice, logoDataUri: string | null): 
     )
     .join('');
 
-  const referralBadge =
-    invoice.type === 'referral' ? '<span class="flow-badge">REFERRAL SALE (+10%)</span>' : '';
+  const discount = invoice.discount ?? 0;
+  const discountRow =
+    discount > 0
+      ? `<div class="row muted"><span>Discount</span><span>− ${esc(
+          formatINR(discount),
+        )}</span></div>`
+      : '';
 
   return `
 <!DOCTYPE html>
@@ -80,10 +85,6 @@ export function buildInvoiceHtml(invoice: Invoice, logoDataUri: string | null): 
   /* Title row */
   .title-row { display: flex; align-items: center; justify-content: space-between; margin: 22px 4px 8px; }
   .title { font-size: 18px; font-weight: bold; letter-spacing: 3px; color: #1F6F43; }
-  .flow-badge {
-    background: #C9A227; color: #FFFFFF; font-size: 9px; font-weight: bold;
-    padding: 4px 10px; border-radius: 999px; letter-spacing: 1px;
-  }
   .meta { display: flex; justify-content: flex-end; margin: 4px 4px 14px; text-align: right; font-size: 11px; color: #6B7C74; }
   .meta b { color: #1C2B24; }
 
@@ -153,7 +154,6 @@ export function buildInvoiceHtml(invoice: Invoice, logoDataUri: string | null): 
 
     <div class="title-row">
       <div class="title">TAX INVOICE</div>
-      ${referralBadge}
     </div>
     <div class="meta">
       <div>
@@ -184,6 +184,7 @@ export function buildInvoiceHtml(invoice: Invoice, logoDataUri: string | null): 
     <div class="totals">
       <div class="row muted"><span>Item(s)</span><span>${invoice.items.length}</span></div>
       <div class="row muted"><span>Subtotal</span><span>${esc(formatINR(invoice.subtotal))}</span></div>
+      ${discountRow}
       <div class="row muted"><span>GST (5%)</span><span>${esc(formatINR(invoice.gst))}</span></div>
       <div class="row grand"><span>Grand Total</span><span>${esc(formatINR(invoice.grandTotal))}</span></div>
     </div>

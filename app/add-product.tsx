@@ -11,6 +11,8 @@ import React, { useState } from 'react';
 import {
   Alert,
   Image,
+  KeyboardAvoidingView,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -145,11 +147,16 @@ export default function AddProductScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      <ScrollView
-        contentContainerStyle={[styles.form, { paddingBottom: insets.bottom + spacing.lg }]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
+        <ScrollView
+          contentContainerStyle={[styles.form, { paddingBottom: insets.bottom + spacing.lg }]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+        >
         {/* Photo picker with preview / placeholder */}
         <View style={styles.photoSection}>
           {imageUri ? (
@@ -282,16 +289,17 @@ export default function AddProductScreen() {
             </View>
           )}
         />
-      </ScrollView>
+        </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
-        <PrimaryButton
-          title={editing ? 'Save changes' : 'Save product'}
-          onPress={onSubmit}
-          disabled={!isValid}
-          icon="check"
-        />
-      </View>
+        <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
+          <PrimaryButton
+            title={editing ? 'Save changes' : 'Save product'}
+            onPress={onSubmit}
+            disabled={!isValid}
+            icon="check"
+          />
+        </View>
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
@@ -300,6 +308,9 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  flex: {
+    flex: 1,
   },
   header: {
     flexDirection: 'row',

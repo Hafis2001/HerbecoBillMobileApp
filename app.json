@@ -18,14 +18,23 @@
     },
     "android": {
       "package": "com.herbeco.app",
-      "permissions": ["CAMERA"],
+      "softwareKeyboardLayoutMode": "resize",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
       "adaptiveIcon": {
         "foregroundImage": "./assets/logo.png",
         "backgroundColor": "#1F6F43"
       }
     },
     "plugins": [
-      ["expo-router", { "root": "app" }],
+      [
+        "expo-router",
+        {
+          "root": "app"
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -45,6 +54,17 @@
     ],
     "experiments": {
       "tsconfigPaths": true
+    },
+    "extra": {
+      "router": {
+        "root": "app",
+        "asyncRoutes": {
+          "web": true
+        }
+      },
+      "eas": {
+        "projectId": "f4596a31-da64-49d4-819e-fffd4fa66747"
+      }
     }
   }
 }
