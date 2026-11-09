@@ -10,7 +10,6 @@
 import { Feather } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -21,6 +20,7 @@ import {
   View,
 } from 'react-native';
 import theme from '../constants/theme';
+import { useResponsive } from '../hooks/useResponsive';
 import { formatINR, formatPriceWithUnit, formatQuantity, gramsToKg, kgToGrams } from '../utils/format';
 import { round2 } from '../utils/pricing';
 import type { Unit } from '../types';
@@ -57,6 +57,7 @@ export function QuantityEntryModal({
   onClose,
   onSubmit,
 }: QuantityEntryModalProps) {
+  const { isTablet } = useResponsive();
   const isWeight = unit === 'kg';
   const [mode, setMode] = useState<Mode>(isWeight ? 'grams' : 'kg');
   const [text, setText] = useState('');
@@ -120,19 +121,30 @@ export function QuantityEntryModal({
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <KeyboardAvoidingView
-        style={styles.backdrop}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-      >
+      <View style={[styles.backdrop, isTablet && { justifyContent: 'center', paddingHorizontal: spacing.md }]}>
         <Pressable style={styles.backdropTouch} onPress={onClose} accessibilityLabel="Close" />
 
-        <View style={[styles.sheet, cardShadow]}>
+        <View
+          style={[
+            styles.sheet,
+            cardShadow,
+            isTablet && {
+              maxWidth: 480,
+              alignSelf: 'center',
+              width: '100%',
+              borderBottomLeftRadius: radius.lg,
+              borderBottomRightRadius: radius.lg,
+              marginBottom: 20,
+            },
+          ]}
+        >
           <View style={styles.grabber} />
 
           <ScrollView
             style={styles.sheetScroll}
             contentContainerStyle={styles.sheetScrollContent}
             keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
             showsVerticalScrollIndicator={false}
             bounces={false}
           >
@@ -175,7 +187,6 @@ export function QuantityEntryModal({
               placeholderTextColor={colors.textMuted}
               style={styles.input}
               autoFocus={Platform.OS === 'ios'}
-              selectTextOnFocus
             />
             {isWeight ? (
               <Text style={styles.inputSuffix}>{mode === 'grams' ? 'g' : mode === 'kg' ? 'kg' : '₹'}</Text>
@@ -226,7 +237,7 @@ export function QuantityEntryModal({
             <Text style={styles.cancelText}>Cancel</Text>
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </Modal>
   );
 }

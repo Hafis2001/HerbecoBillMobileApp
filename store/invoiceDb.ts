@@ -8,6 +8,7 @@
  */
 
 import type {
+  Expense,
   Invoice,
   InvoiceRecord,
   InvoiceStatus,
@@ -36,6 +37,10 @@ interface InvoiceRow {
   referral_name: string | null;
   commission_paid: number | null;
   commission_paid_ms: number | null;
+  payment_method: string | null;
+  bank_amount: number | null;
+  cash_amount: number | null;
+  payment_confirmed: number | null;
 }
 
 const rowToRecord = (row: InvoiceRow): InvoiceRecord => ({
@@ -56,17 +61,26 @@ const rowToRecord = (row: InvoiceRow): InvoiceRecord => ({
   referralName: row.referral_name ?? null,
   commissionPaid: Boolean(row.commission_paid),
   commissionPaidAtMs: row.commission_paid_ms ?? null,
+  paymentMethod: (row.payment_method as 'cash' | 'bank' | 'split' | null) ?? null,
+  bankAmount: row.bank_amount ?? 0,
+  cashAmount: row.cash_amount ?? 0,
+  paymentConfirmed: Boolean(row.payment_confirmed),
 });
 
 /** Persists a generated invoice (upsert by number, so re-generating is safe). */
 export async function saveInvoice(invoice: Invoice): Promise<void> {
   const db = await getDatabase();
+  const method = invoice.paymentMethod ?? 'cash';
+  const bankAmt = invoice.bankAmount ?? (method === 'bank' ? invoice.grandTotal : 0);
+  const cashAmt = invoice.cashAmount ?? (method === 'cash' ? invoice.grandTotal : 0);
+  const confirmed = invoice.paymentConfirmed ? 1 : 0;
+
   await db.runAsync(
     `INSERT INTO invoices
        (id, number, type, customer_name, customer_phone, items_json,
         subtotal, discount, gst, grand_total, created_at_ms, status, uploaded_at_ms,
-        referral_code, referral_name)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?)
+        referral_code, referral_name, payment_method, bank_amount, cash_amount, payment_confirmed)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(number) DO UPDATE SET
        customer_name = excluded.customer_name,
        customer_phone = excluded.customer_phone,
@@ -76,7 +90,11 @@ export async function saveInvoice(invoice: Invoice): Promise<void> {
        gst = excluded.gst,
        grand_total = excluded.grand_total,
        referral_code = excluded.referral_code,
-       referral_name = excluded.referral_name`,
+       referral_name = excluded.referral_name,
+       payment_method = COALESCE(excluded.payment_method, invoices.payment_method),
+       bank_amount = COALESCE(excluded.bank_amount, invoices.bank_amount),
+       cash_amount = COALESCE(excluded.cash_amount, invoices.cash_amount),
+       payment_confirmed = COALESCE(excluded.payment_confirmed, invoices.payment_confirmed)`,
     invoice.number,
     invoice.number,
     invoice.type,
@@ -90,6 +108,10 @@ export async function saveInvoice(invoice: Invoice): Promise<void> {
     new Date(invoice.createdAt).getTime(),
     invoice.referral?.code ?? null,
     invoice.referral?.name ?? null,
+    method,
+    bankAmt,
+    cashAmt,
+    confirmed,
   );
 }
 
@@ -204,4 +226,89 @@ export async function setCommissionPaid(id: string, paid: boolean): Promise<void
     paid ? Date.now() : null,
     id,
   );
+}
+
+/**
+ * Saves the payment method (cash/bank/split) and amounts against a bill.
+ * Called when the cashier confirms payment on the bill screen.
+ */
+export async function updateBillPayment(
+  id: string,
+  method: 'cash' | 'bank' | 'split',
+  bankAmount: number,
+  cashAmount: number,
+  confirmed: boolean,
+): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    'UPDATE invoices SET payment_method = ?, bank_amount = ?, cash_amount = ?, payment_confirmed = ? WHERE id = ?',
+    method,
+    bankAmount,
+    cashAmount,
+    confirmed ? 1 : 0,
+    id,
+  );
+}
+
+// ─── Expense operations ───────────────────────────────────────────────────────
+
+interface ExpenseRow {
+  id: string;
+  description: string;
+  amount: number;
+  paid_via: string;
+  category: string | null;
+  created_at_ms: number;
+}
+
+function rowToExpense(row: ExpenseRow): Expense {
+  return {
+    id: row.id,
+    description: row.description,
+    amount: row.amount,
+    paidVia: row.paid_via === 'bank' ? 'bank' : 'cash',
+    category: row.category ?? undefined,
+    createdAtMs: row.created_at_ms,
+  };
+}
+
+/** Saves a new expense entry. */
+export async function saveExpense(expense: Expense): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync(
+    `INSERT INTO expenses (id, description, amount, paid_via, category, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    expense.id,
+    expense.description,
+    expense.amount,
+    expense.paidVia,
+    expense.category ?? null,
+    expense.createdAtMs,
+  );
+}
+
+/** All expenses, newest first. */
+export async function getExpenses(): Promise<Expense[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<ExpenseRow>(
+    'SELECT * FROM expenses ORDER BY created_at_ms DESC',
+  );
+  return rows.map(rowToExpense);
+}
+
+/** Expenses within a time range (startMs inclusive, endMs exclusive). */
+export async function getExpensesInRange(startMs: number, endMs: number): Promise<Expense[]> {
+  const db = await getDatabase();
+  const rows = await db.getAllAsync<ExpenseRow>(
+    'SELECT * FROM expenses WHERE created_at_ms >= ? AND created_at_ms < ? ORDER BY created_at_ms DESC',
+    startMs,
+    endMs,
+  );
+  return rows.map(rowToExpense);
+}
+
+/** Deletes an expense by id. */
+export async function deleteExpense(id: string): Promise<void> {
+  const db = await getDatabase();
+  await db.runAsync('DELETE FROM expenses WHERE id = ?', id);
 }

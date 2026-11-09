@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useResponsive } from '../../hooks/useResponsive';
 import { showToast } from '../../components/Toast';
 import ReferralFormModal from '../../components/ReferralFormModal';
 import { EmptyState } from '../../components/EmptyState';
@@ -32,6 +33,7 @@ const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
 export default function SettingsReferralsScreen() {
   const insets = useSafeAreaInsets();
+  const { isTablet, maxContentWidth } = useResponsive();
   const [owners, setOwners] = useState<ReferralOwner[]>([]);
   const [stats, setStats] = useState<Record<string, ReferralStat>>({});
   const [loading, setLoading] = useState(true);
@@ -92,46 +94,50 @@ export default function SettingsReferralsScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
-          <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Referral partners</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Add referral partner"
-          onPress={() => setFormOpen(true)}
-          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
-        >
-          <Feather name="plus" size={15} color={colors.textOnPrimary} />
-          <Text style={styles.addBtnText}>Add</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.searchBox}>
-        <Feather name="search" size={18} color={colors.textMuted} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search by name or referral ID…"
-          placeholderTextColor={colors.textMuted}
-          style={styles.searchInput}
-          autoCapitalize="none"
-          returnKeyType="search"
-        />
-        {search ? (
-          <Pressable onPress={() => setSearch('')} accessibilityLabel="Clear search" hitSlop={8}>
-            <Feather name="x" size={17} color={colors.textMuted} />
+      <View style={[styles.mainWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
           </Pressable>
-        ) : null}
-      </View>
+          <Text style={styles.headerTitle}>Referral partners</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add referral partner"
+            onPress={() => setFormOpen(true)}
+            style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Feather name="plus" size={15} color={colors.textOnPrimary} />
+            <Text style={styles.addBtnText}>Add</Text>
+          </Pressable>
+        </View>
 
-      <ScrollView
-        contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
-        keyboardDismissMode="on-drag"
-      >
+        <View style={styles.searchBox}>
+          <Feather name="search" size={18} color={colors.textMuted} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search by name or referral ID…"
+            placeholderTextColor={colors.textMuted}
+            style={styles.searchInput}
+            autoCapitalize="none"
+            returnKeyType="search"
+          />
+          {search ? (
+            <Pressable onPress={() => setSearch('')} accessibilityLabel="Clear search" hitSlop={8}>
+              <Feather name="x" size={17} color={colors.textMuted} />
+            </Pressable>
+          ) : null}
+        </View>
+
+        <ScrollView
+          contentContainerStyle={[
+            styles.body,
+            { paddingBottom: insets.bottom + spacing.xl },
+          ]}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="on-drag"
+        >
         <View style={styles.filterRow}>
           <Pressable
             accessibilityRole="button"
@@ -222,6 +228,7 @@ export default function SettingsReferralsScreen() {
           })
         )}
       </ScrollView>
+      </View>
 
       <ReferralFormModal
         visible={formOpen}
@@ -235,6 +242,7 @@ export default function SettingsReferralsScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  mainWrap: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

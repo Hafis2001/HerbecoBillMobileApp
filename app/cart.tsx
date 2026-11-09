@@ -14,7 +14,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Alert,
   FlatList,
-  KeyboardAvoidingView,
+  Image,
   Platform,
   Pressable,
   ScrollView,
@@ -27,13 +27,16 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Controller, useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
+import QRCode from 'react-native-qrcode-svg';
 import theme from '../constants/theme';
+import { useResponsive } from '../hooks/useResponsive';
 import { computeTotals } from '../utils/pricing';
 import { useHomeCart } from '../store/homeCartStore';
 import { useReferralCart } from '../store/referralCartStore';
 import { useInvoiceCounter } from '../store/invoiceStore';
 import { useReferralSession } from '../store/referralSession';
-import type { CartItem, CartType, CustomerFormValues, Invoice } from '../types';
+import { usePaymentSettings, buildUpiUri } from '../store/paymentSettingsStore';
+import type { CartItem, CartType, CustomerFormValues, Invoice, PaymentMethod } from '../types';
 import CartItemRow from '../components/CartItem';
 import QuantityEntryModal from '../components/QuantityEntryModal';
 import EmptyState from '../components/EmptyState';
@@ -56,6 +59,7 @@ const customerSchema = z.object({
 });
 
 export default function CartScreen() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const params = useLocalSearchParams<{ type?: string }>();
   const type: CartType = params.type === 'referral' ? 'referral' : 'home';
 
@@ -90,8 +94,26 @@ export default function CartScreen() {
   const [editingItem, setEditingItem] = useState<CartItem | null>(null);
   /** Raw text in the discount box, so the owner can type "50." without it jumping. */
   const [discountText, setDiscountText] = useState(discount > 0 ? String(discount) : '');
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>('cash');
+  const [splitBankText, setSplitBankText] = useState('');
+  const [showQr, setShowQr] = useState(false);
+  const paymentSettings = usePaymentSettings((s) => s.settings);
 
   const cartApi = type === 'referral' ? useReferralCart : useHomeCart;
+
+  const parsedSplitBank = parseFloat(splitBankText.replace(/[^0-9.]/g, '')) || 0;
+  const effectiveBankAmount =
+    paymentMethod === 'bank'
+      ? totals.grandTotal
+      : paymentMethod === 'split'
+        ? parsedSplitBank
+        : 0;
+  const effectiveCashAmount =
+    paymentMethod === 'cash'
+      ? totals.grandTotal
+      : paymentMethod === 'split'
+        ? Math.max(0, totals.grandTotal - parsedSplitBank)
+        : 0;
 
   const clearCart = () => {
     Alert.alert('Clear cart', 'Remove all items from this cart?', [
@@ -119,7 +141,7 @@ export default function CartScreen() {
 
   const buildInvoice = (rawName: string, rawPhone: string) => {
     if (cartItems.length === 0) return;
-    const phoneDigits = rawPhone.replace(/\D/g, '').replace(/^(91|0)/, '');
+    const phoneDigits = rawName ? rawPhone.replace(/\D/g, '').replace(/^(91|0)/, '') : '';
     const invoice: Invoice = {
       number: useInvoiceCounter.getState().nextInvoiceNumber(),
       type,
@@ -134,6 +156,10 @@ export default function CartScreen() {
         type === 'referral' && referralPartner
           ? { code: referralPartner.code, name: referralPartner.name }
           : undefined,
+      paymentMethod,
+      bankAmount: effectiveBankAmount,
+      cashAmount: effectiveCashAmount,
+      paymentConfirmed: false,
     };
     router.push({ pathname: '/bill', params: { data: JSON.stringify(invoice) } });
   };
@@ -156,27 +182,33 @@ export default function CartScreen() {
   if (cartItems.length === 0) {
     return (
       <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-        <CartHeader type={type} onClear={clearCart} />
-        <EmptyState
-          icon="shopping-cart"
-          title="Your cart is empty"
-          subtitle={
-            type === 'referral'
-              ? 'Head to the Referral tab to add products at +10% pricing.'
-              : 'Head to the Home tab to add products at normal price.'
-          }
-          actionLabel="Browse products"
-          onAction={() =>
-            router.push(type === 'referral' ? '/(tabs)/referral' : '/(tabs)')
-          }
-        />
+        <View style={[styles.headerWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+          <CartHeader type={type} onClear={clearCart} />
+        </View>
+        <View style={[styles.flex, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+          <EmptyState
+            icon="shopping-cart"
+            title="Your cart is empty"
+            subtitle={
+              type === 'referral'
+                ? 'Head to the Referral tab to add products at +10% pricing.'
+                : 'Head to the Home tab to add products at normal price.'
+            }
+            actionLabel="Browse products"
+            onAction={() =>
+              router.push(type === 'referral' ? '/(tabs)/referral' : '/(tabs)')
+            }
+          />
+        </View>
       </SafeAreaView>
     );
   }
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <CartHeader type={type} onClear={clearCart} />
+      <View style={[styles.headerWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        <CartHeader type={type} onClear={clearCart} />
+      </View>
 
       {editingItem ? (
         <QuantityEntryModal
@@ -193,16 +225,17 @@ export default function CartScreen() {
         />
       ) : null}
 
-      <KeyboardAvoidingView
+      <ScrollView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        contentContainerStyle={[
+          styles.body,
+          { paddingBottom: insets.bottom + 120 },
+          isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       >
-        <ScrollView
-          contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 120 }]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        >
         <FlatList
           scrollEnabled={false}
           data={cartItems as CartItem[]}
@@ -262,6 +295,115 @@ export default function CartScreen() {
           gst={totals.gst}
           grandTotal={totals.grandTotal}
         />
+
+        {/* Payment mode: Bank, Cash or Split */}
+        <Text style={styles.sectionTitle}>Payment Mode</Text>
+        <View style={styles.paymentMethodRow}>
+          {(['cash', 'bank', 'split'] as const).map((m) => (
+            <Pressable
+              key={m}
+              style={[styles.pmBtn, paymentMethod === m && styles.pmBtnActive]}
+              onPress={() => {
+                setPaymentMethod(m);
+                if (m === 'cash') setShowQr(false);
+              }}
+            >
+              <Feather
+                name={m === 'cash' ? 'dollar-sign' : m === 'bank' ? 'credit-card' : 'git-merge'}
+                size={14}
+                color={paymentMethod === m ? colors.textOnPrimary : colors.text}
+              />
+              <Text style={[styles.pmText, paymentMethod === m && styles.pmTextActive]}>
+                {m === 'cash' ? 'Cash' : m === 'bank' ? 'Bank (UPI)' : 'Split'}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
+        {paymentMethod === 'split' ? (
+          <View style={[styles.splitBox, cardShadow]}>
+            <Text style={styles.splitInputLabel}>Bank / UPI Amount (₹)</Text>
+            <View style={styles.splitInputWrap}>
+              <Text style={styles.rupee}>₹</Text>
+              <TextInput
+                value={splitBankText}
+                onChangeText={setSplitBankText}
+                placeholder="0.00"
+                placeholderTextColor={colors.textMuted}
+                keyboardType="decimal-pad"
+                style={styles.splitInput}
+              />
+            </View>
+            <Text style={styles.splitSummary}>
+              Bank: {formatINR(effectiveBankAmount)} · Cash: {formatINR(effectiveCashAmount)}
+            </Text>
+          </View>
+        ) : null}
+
+        {/* Dynamic QR display with Close button */}
+        {(paymentMethod === 'bank' || paymentMethod === 'split') && effectiveBankAmount > 0 ? (
+          <View style={[styles.cartQrCard, cardShadow]}>
+            {!showQr ? (
+              <Pressable
+                style={styles.openQrBtn}
+                onPress={() => setShowQr(true)}
+              >
+                <Feather name="maximize-2" size={16} color={colors.primary} />
+                <Text style={styles.openQrBtnText}>Show QR Code · {formatINR(effectiveBankAmount)}</Text>
+              </Pressable>
+            ) : (
+              <View style={styles.qrDisplayWrap}>
+                <View style={styles.qrDisplayHead}>
+                  <Text style={styles.qrDisplayTitle}>
+                    {paymentSettings?.merchantName || 'UPI Payment'}
+                  </Text>
+                  <Pressable
+                    onPress={() => setShowQr(false)}
+                    hitSlop={8}
+                    style={styles.closeQrBtn}
+                    accessibilityRole="button"
+                    accessibilityLabel="Close QR"
+                  >
+                    <Ionicons name="close-circle" size={20} color={colors.danger} />
+                    <Text style={styles.closeQrText}>Close QR</Text>
+                  </Pressable>
+                </View>
+
+                {paymentSettings?.upiId ? (
+                  <View style={styles.qrCodeBox}>
+                    <QRCode
+                      value={buildUpiUri({
+                        upiId: paymentSettings.upiId,
+                        merchantName: paymentSettings.merchantName || 'HERBECO',
+                        amount: effectiveBankAmount,
+                        billNumber: 'PAY',
+                      })}
+                      size={160}
+                    />
+                    <Text style={styles.qrVpa}>{paymentSettings.upiId}</Text>
+                    <Text style={styles.qrAmountHighlight}>{formatINR(effectiveBankAmount)}</Text>
+                  </View>
+                ) : paymentSettings?.staticQrUri ? (
+                  <View style={styles.qrCodeBox}>
+                    <Image
+                      source={{ uri: paymentSettings.staticQrUri }}
+                      style={{ width: 160, height: 160, borderRadius: radius.sm }}
+                      resizeMode="contain"
+                    />
+                    <Text style={styles.qrAmountHighlight}>{formatINR(effectiveBankAmount)}</Text>
+                  </View>
+                ) : (
+                  <View style={styles.noUpiAlert}>
+                    <Feather name="alert-circle" size={16} color={colors.gold} />
+                    <Text style={styles.noUpiText}>
+                      Configure your UPI ID in Settings → Payment Settings to generate dynamic QR.
+                    </Text>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        ) : null}
 
         <Text style={styles.sectionTitle}>Customer Details</Text>
 
@@ -361,9 +503,15 @@ export default function CartScreen() {
               )}
             />
           </View>
-        </ScrollView>
+      </ScrollView>
 
-        <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
+      <View
+        style={[
+          styles.footer,
+          { paddingBottom: insets.bottom + spacing.sm },
+        ]}
+      >
+        <View style={[styles.footerInner, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
           <PrimaryButton
             title={`Generate Bill · ${formatINR(totals.grandTotal)}`}
             onPress={onGenerateBill}
@@ -380,7 +528,7 @@ export default function CartScreen() {
                   : 'Ready to create the invoice.'}
           </Text>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </SafeAreaView>
   );
 }
@@ -406,6 +554,12 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  headerWrap: {
+    width: '100%',
+  },
+  footerInner: {
+    width: '100%',
   },
   flex: {
     flex: 1,
@@ -628,6 +782,149 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
   noPartnerBtn: { marginTop: spacing.md },
+  paymentMethodRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  pmBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm + 4,
+  },
+  pmBtnActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  pmText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs + 1,
+    color: colors.text,
+  },
+  pmTextActive: {
+    color: colors.textOnPrimary,
+  },
+  splitBox: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  splitInputLabel: {
+    fontFamily: fonts.medium,
+    fontSize: fontSize.xs,
+    color: colors.text,
+    marginBottom: 6,
+  },
+  splitInputWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    minHeight: 46,
+    paddingHorizontal: spacing.sm + 4,
+    gap: 4,
+  },
+  splitInput: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.md,
+    color: colors.text,
+    padding: 0,
+  },
+  splitSummary: {
+    fontFamily: fonts.medium,
+    fontSize: fontSize.xs,
+    color: colors.primary,
+    marginTop: 6,
+  },
+  cartQrCard: {
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    padding: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  openQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.sm + 4,
+  },
+  openQrBtnText: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.sm,
+    color: colors.primary,
+  },
+  qrDisplayWrap: {
+    alignItems: 'center',
+  },
+  qrDisplayHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginBottom: spacing.sm,
+  },
+  qrDisplayTitle: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.sm,
+    color: colors.text,
+  },
+  closeQrBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 6,
+  },
+  closeQrText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSize.xs,
+    color: colors.danger,
+  },
+  qrCodeBox: {
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+  qrVpa: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+    marginTop: spacing.sm,
+  },
+  qrAmountHighlight: {
+    fontFamily: fonts.bold,
+    fontSize: fontSize.lg,
+    color: colors.primary,
+    marginTop: 2,
+  },
+  noUpiAlert: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    backgroundColor: colors.goldSoft,
+    borderRadius: radius.sm,
+    padding: spacing.sm + 2,
+    alignItems: 'flex-start',
+  },
+  noUpiText: {
+    flex: 1,
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
+    color: colors.text,
+    lineHeight: 16,
+  },
   footer: {
     paddingHorizontal: spacing.md,
     backgroundColor: colors.background,

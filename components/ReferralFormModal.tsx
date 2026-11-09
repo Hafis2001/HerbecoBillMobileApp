@@ -19,8 +19,8 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../constants/theme';
+import { useResponsive } from '../hooks/useResponsive';
 import { normalizeReferralCode } from '../store/referralDb';
-import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
 import type { ReferralOwner } from '../types';
 import PrimaryButton from './PrimaryButton';
 
@@ -45,8 +45,7 @@ export function ReferralFormModal({
   onSave,
 }: ReferralFormModalProps) {
   const insets = useSafeAreaInsets();
-  // The sheet slides up with the keyboard instead of hiding the Save button.
-  const keyboardHeight = useKeyboardHeight();
+  const { isTablet } = useResponsive();
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
@@ -106,11 +105,12 @@ export function ReferralFormModal({
     >
       <View style={styles.backdrop}>
         <Pressable style={styles.backdropFill} onPress={onClose} accessibilityLabel="Close" />
-        <View style={styles.sheetWrap}>
+        <View style={[styles.sheetWrap, isTablet && { maxWidth: 480, alignSelf: 'center', marginBottom: 24 }]}>
           <View
             style={[
               styles.sheet,
-              { paddingBottom: insets.bottom + spacing.md + keyboardHeight },
+              { paddingBottom: insets.bottom + spacing.md },
+              isTablet && { borderRadius: radius.lg },
             ]}
           >
             <View style={styles.grabber} />

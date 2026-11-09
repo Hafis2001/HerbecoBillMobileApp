@@ -14,19 +14,19 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  useWindowDimensions,
   View,
 } from 'react-native';
 import theme from '../constants/theme';
-import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
-import { formatINR } from '../utils/format';
+import { useResponsive } from '../hooks/useResponsive';
+import { formatINR, formatPriceWithUnit } from '../utils/format';
 import { getReferralPrice, round2 } from '../utils/pricing';
 import type { CartItem, Product, Unit } from '../types';
 import AppHeader from './AppHeader';
 import CategoryChip from './CategoryChip';
-import ProductCard from './ProductCard';
 import EmptyState from './EmptyState';
+import ProductImage from './ProductImage';
 import QuantityEntryModal from './QuantityEntryModal';
+import QuantitySelector from './QuantitySelector';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -62,14 +62,7 @@ export function ProductListScreen({
   referralName,
   onChangeReferral,
 }: ProductListScreenProps) {
-  const { width } = useWindowDimensions();
-  // The keyboard overlays the grid on edge-to-edge Android, so the list adds
-  // the keyboard's height to its bottom padding and every product stays
-  // scrollable into view above it.
-  const keyboardHeight = useKeyboardHeight();
-  // Phones get 2 columns, small tablets 3, large tablets/foldables 4, so the
-  // cards never stretch into huge uneven blocks.
-  const columns = width >= 1000 ? 4 : width >= 720 ? 3 : 2;
+  const { isTablet, maxContentWidth } = useResponsive();
   // Referral screens arrive via URL param type=referral from the tab bar.
   const params = useLocalSearchParams<{ type?: string }>();
   const isReferral = flow === 'referral' || params.type === 'referral';
@@ -128,102 +121,102 @@ export function ProductListScreen({
         rightAccessibilityLabel={`Open ${isReferral ? 'referral' : 'home'} cart`}
       />
 
-      {/* Search + filter chips */}
-      <View style={styles.searchRow}>
-        <View style={styles.searchBox}>
-          <Feather name="search" size={18} color={colors.textMuted} />
-          <TextInput
-            value={search}
-            onChangeText={setSearch}
-            placeholder={isReferral ? 'Search referral products…' : 'Search products…'}
-            placeholderTextColor={colors.textMuted}
-            style={styles.searchInput}
-            returnKeyType="search"
-            autoCorrect={false}
-          />
-          {search.length > 0 ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Clear search"
-              onPress={() => setSearch('')}
-              hitSlop={10}
-            >
-              <Feather name="x-circle" size={17} color={colors.textMuted} />
-            </Pressable>
-          ) : null}
-        </View>
-      </View>
-      <View style={styles.chipsRow}>
-        {FILTERS.map((f) => (
-          <CategoryChip
-            key={f.key}
-            label={f.label}
-            active={filter === f.key}
-            onPress={() => setFilter(f.key)}
-          />
-        ))}
-      </View>
-
-      {isReferral ? (
-        <View style={styles.referralBanner}>
-          <Feather name="users" size={14} color={colors.gold} />
-          <Text style={styles.referralBannerText} numberOfLines={2}>
-            {referralName ? `${referralName} · ` : ''}Referral pricing — every product
-            price includes +10%
-          </Text>
-          {onChangeReferral ? (
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Change referral ID"
-              onPress={onChangeReferral}
-              hitSlop={8}
-              style={({ pressed }) => [styles.changeChip, pressed && { opacity: 0.8 }]}
-            >
-              <Text style={styles.changeChipText}>Change</Text>
-            </Pressable>
-          ) : null}
-        </View>
-      ) : null}
-
-      {filtered.length === 0 ? (
-        <EmptyState
-          title={products.length === 0 ? 'No products yet' : 'No products match'}
-          subtitle={
-            products.length === 0
-              ? 'Add your first product to start selling.'
-              : 'Try a different search or filter.'
-          }
-          actionLabel={products.length === 0 ? 'Add product' : undefined}
-          onAction={products.length === 0 ? () => router.push('/add-product') : undefined}
-        />
-      ) : (
-        <FlatList
-          // FlatList cannot change numColumns in place — remount when it does.
-          key={`grid-${columns}`}
-          data={filtered}
-          keyExtractor={(p) => p.id}
-          numColumns={columns}
-          columnWrapperStyle={styles.column}
-          contentContainerStyle={[
-            styles.grid,
-            { paddingBottom: keyboardHeight > 0 ? keyboardHeight + 32 : 160 },
-          ]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          renderItem={({ item }) => (
-            <ProductCard
-              product={item}
-              flow={isReferral ? 'referral' : 'home'}
-              quantityInCart={qtyInCart(item.id)}
-              onAdd={() => handleAdd(item)}
-              onQuantityChange={(q) => setQuantity(item.id, q)}
-              onRemoveFromCart={() => setQuantity(item.id, 0)}
-              onEditQuantity={() => setEntryProduct(item)}
+      <View style={[styles.mainContainer, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        {/* Search + filter chips */}
+        <View style={styles.searchRow}>
+          <View style={styles.searchBox}>
+            <Feather name="search" size={18} color={colors.textMuted} />
+            <TextInput
+              value={search}
+              onChangeText={setSearch}
+              placeholder={isReferral ? 'Search referral products…' : 'Search products…'}
+              placeholderTextColor={colors.textMuted}
+              style={styles.searchInput}
+              returnKeyType="search"
+              autoCorrect={false}
             />
-          )}
-        />
-      )}
+            {search.length > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Clear search"
+                onPress={() => setSearch('')}
+                hitSlop={10}
+              >
+                <Feather name="x-circle" size={17} color={colors.textMuted} />
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+        <View style={styles.chipsRow}>
+          {FILTERS.map((f) => (
+            <CategoryChip
+              key={f.key}
+              label={f.label}
+              active={filter === f.key}
+              onPress={() => setFilter(f.key)}
+            />
+          ))}
+        </View>
+
+        {isReferral ? (
+          <View style={styles.referralBanner}>
+            <Feather name="users" size={14} color={colors.gold} />
+            <Text style={styles.referralBannerText} numberOfLines={2}>
+              {referralName ? `${referralName} · ` : ''}Referral pricing — every product
+              price includes +10%
+            </Text>
+            {onChangeReferral ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Change referral ID"
+                onPress={onChangeReferral}
+                hitSlop={8}
+                style={({ pressed }) => [styles.changeChip, pressed && { opacity: 0.8 }]}
+              >
+                <Text style={styles.changeChipText}>Change</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
+
+        {filtered.length === 0 ? (
+          <EmptyState
+            title={products.length === 0 ? 'No products yet' : 'No products match'}
+            subtitle={
+              products.length === 0
+                ? 'Add your first product to start selling.'
+                : 'Try a different search or filter.'
+            }
+            actionLabel={products.length === 0 ? 'Add product' : undefined}
+            onAction={products.length === 0 ? () => router.push('/add-product') : undefined}
+          />
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={(p) => p.id}
+            contentContainerStyle={styles.list}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            renderItem={({ item }) => {
+              const qty = qtyInCart(item.id);
+              const flowPrice = unitPriceFor(item);
+              return (
+                <ProductListRow
+                  product={item}
+                  flow={isReferral ? 'referral' : 'home'}
+                  quantityInCart={qty}
+                  flowPrice={flowPrice}
+                  onAdd={() => handleAdd(item)}
+                  onQuantityChange={(q) => setQuantity(item.id, q)}
+                  onRemoveFromCart={() => setQuantity(item.id, 0)}
+                  onEditQuantity={() => setEntryProduct(item)}
+                />
+              );
+            }}
+          />
+        )}
+      </View>
 
       {entryProduct ? (
         <QuantityEntryModal
@@ -237,17 +230,20 @@ export function ProductListScreen({
         />
       ) : null}
 
-      {/* Floating "View Cart" bar (only when the cart has items and the
-          keyboard is closed — otherwise it would sit on top of the grid) */}
-      {itemCount > 0 && keyboardHeight === 0 ? (
+      {/* Floating "View Cart" bar (only when the cart has items) */}
+      {itemCount > 0 ? (
         <Pressable
           accessibilityRole="button"
           onPress={openCart}
           style={(state) => [
             styles.floatBar,
-            // The tab screen already ends above the tab bar, so a fixed gap
-            // keeps this bar pinned just above it on every device.
             { bottom: spacing.md },
+            isTablet && {
+              left: '50%',
+              marginLeft: -((maxContentWidth ?? 680) - spacing.md * 2) / 2,
+              width: (maxContentWidth ?? 680) - spacing.md * 2,
+              right: undefined,
+            },
             cardShadow,
             Boolean(state.pressed) && { opacity: 0.92 },
           ]}
@@ -265,10 +261,84 @@ export function ProductListScreen({
   );
 }
 
+interface ProductListRowProps {
+  product: Product;
+  flow: 'home' | 'referral';
+  quantityInCart: number;
+  flowPrice: number;
+  onAdd: () => void;
+  onQuantityChange: (qty: number) => void;
+  onRemoveFromCart: () => void;
+  onEditQuantity: () => void;
+}
+
+function ProductListRow({
+  product,
+  flow,
+  quantityInCart,
+  flowPrice,
+  onAdd,
+  onQuantityChange,
+  onRemoveFromCart,
+  onEditQuantity,
+}: ProductListRowProps) {
+  const isReferral = flow === 'referral';
+
+  return (
+    <View style={styles.row}>
+      <ProductImage uri={product.imageUri} style={styles.thumb} iconSize={22} />
+      <View style={styles.rowCenter}>
+        <Text style={styles.rowName} numberOfLines={2}>
+          {product.name}
+        </Text>
+        <View style={styles.rowPriceRow}>
+          {isReferral ? (
+            <Text style={styles.rowOldPrice}>
+              {formatPriceWithUnit(product.price, product.unit)}
+            </Text>
+          ) : null}
+          <Text style={[styles.rowPrice, isReferral && styles.rowReferralPrice]}>
+            {formatPriceWithUnit(flowPrice, product.unit)}
+          </Text>
+        </View>
+        <View style={[styles.tag, isReferral && styles.referralTag]}>
+          <Text style={[styles.tagText, isReferral && styles.referralTagText]}>
+            {isReferral ? '+10% Referral' : product.unit === 'kg' ? 'By weight (kg)' : 'Per unit'}
+          </Text>
+        </View>
+      </View>
+      <View style={styles.actionWrap}>
+        {quantityInCart > 0 ? (
+          <QuantitySelector
+            size="sm"
+            unit={product.unit}
+            quantity={quantityInCart}
+            onChange={onQuantityChange}
+            onRemove={onRemoveFromCart}
+            onPressValue={product.unit === 'kg' ? onEditQuantity : undefined}
+          />
+        ) : (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Add ${product.name}`}
+            onPress={onAdd}
+            style={({ pressed }) => [styles.rowAddBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Text style={styles.rowAddBtnText}>+ Add</Text>
+          </Pressable>
+        )}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  mainContainer: {
+    flex: 1,
   },
   searchRow: {
     paddingHorizontal: spacing.md,
@@ -314,9 +384,84 @@ const styles = StyleSheet.create({
     color: colors.gold,
     flex: 1,
   },
-  grid: {
-    paddingHorizontal: spacing.sm / 2,
+  list: {
+    paddingHorizontal: spacing.md,
     paddingBottom: 160,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    padding: spacing.sm + 4,
+    marginBottom: spacing.sm + 2,
+    ...cardShadow,
+  },
+  thumb: { width: 56, height: 56, borderRadius: radius.sm },
+  rowCenter: { flex: 1, marginLeft: spacing.sm + 4, marginRight: spacing.sm },
+  rowName: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.sm,
+    color: colors.text,
+  },
+  rowPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+    marginTop: 2,
+  },
+  rowPrice: {
+    fontFamily: fonts.semiBold,
+    fontSize: 12,
+    color: colors.primary,
+  },
+  rowReferralPrice: {
+    color: colors.gold,
+  },
+  rowOldPrice: {
+    fontFamily: fonts.regular,
+    fontSize: 11,
+    color: colors.textMuted,
+    textDecorationLine: 'line-through',
+  },
+  tag: {
+    alignSelf: 'flex-start',
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.pill,
+    paddingHorizontal: 7,
+    paddingVertical: 1,
+    marginTop: 3,
+  },
+  tagText: {
+    fontFamily: fonts.medium,
+    fontSize: 10,
+    color: colors.primary,
+  },
+  referralTag: {
+    backgroundColor: colors.goldSoft,
+  },
+  referralTagText: {
+    color: colors.gold,
+  },
+  actionWrap: {
+    minWidth: 84,
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+  },
+  rowAddBtn: {
+    backgroundColor: colors.primary,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  rowAddBtnText: {
+    color: colors.textOnPrimary,
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs + 1,
   },
   changeChip: {
     flexShrink: 0,

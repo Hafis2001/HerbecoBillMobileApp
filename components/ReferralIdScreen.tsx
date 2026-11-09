@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../constants/theme';
-import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
+import { useResponsive } from '../hooks/useResponsive';
 import { findReferralOwner, normalizeReferralCode } from '../store/referralDb';
 import type { ReferralOwner } from '../types';
 import PrimaryButton from './PrimaryButton';
@@ -36,8 +36,7 @@ interface ReferralIdScreenProps {
 
 export function ReferralIdScreen({ onClose, onActivated }: ReferralIdScreenProps) {
   const insets = useSafeAreaInsets();
-  // Keeps Continue reachable above the keyboard on edge-to-edge Android too.
-  const keyboardHeight = useKeyboardHeight();
+  const { isTablet, maxContentWidth } = useResponsive();
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
@@ -66,29 +65,30 @@ export function ReferralIdScreen({ onClose, onActivated }: ReferralIdScreenProps
 
   return (
     <View style={styles.screen}>
-      <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
-        <Text style={styles.headerTitle}>Referral</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Close referral ID"
-          onPress={onClose}
-          hitSlop={10}
-          style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.85 }]}
-        >
-          <Feather name="x" size={20} color={colors.text} />
-        </Pressable>
-      </View>
+      <View style={[styles.mainWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        <View style={[styles.header, { paddingTop: insets.top + spacing.sm }]}>
+          <Text style={styles.headerTitle}>Referral</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Close referral ID"
+            onPress={onClose}
+            hitSlop={10}
+            style={({ pressed }) => [styles.closeBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Feather name="x" size={20} color={colors.text} />
+          </Pressable>
+        </View>
 
-      <View style={styles.flex}>
-        <ScrollView
-          contentContainerStyle={[
-            styles.body,
-            { paddingBottom: insets.bottom + spacing.xl + keyboardHeight },
-          ]}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          showsVerticalScrollIndicator={false}
-        >
+        <View style={styles.flex}>
+          <ScrollView
+            contentContainerStyle={[
+              styles.body,
+              { paddingBottom: insets.bottom + spacing.xl },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            showsVerticalScrollIndicator={false}
+          >
           <View style={styles.badgeWrap}>
             <View style={styles.badge}>
               <Feather name="users" size={26} color={colors.primary} />
@@ -164,12 +164,14 @@ export function ReferralIdScreen({ onClose, onActivated }: ReferralIdScreenProps
           </Pressable>
         </ScrollView>
       </View>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  mainWrap: { flex: 1 },
   flex: { flex: 1 },
   header: {
     flexDirection: 'row',

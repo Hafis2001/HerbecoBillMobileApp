@@ -20,7 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
-import { useKeyboardHeight } from '../../hooks/useKeyboardHeight';
+import { useResponsive } from '../../hooks/useResponsive';
 import { formatPriceWithUnit } from '../../utils/format';
 import { useProductStore } from '../../store/productStore';
 import { showToast } from '../../components/Toast';
@@ -31,11 +31,10 @@ import EmptyState from '../../components/EmptyState';
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
 export default function SettingsProductsScreen() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const products = useProductStore((s) => s.products);
   const deleteProduct = useProductStore((s) => s.deleteProduct);
   const insets = useSafeAreaInsets();
-  // Keeps the last rows scrollable above the keyboard while searching.
-  const keyboardHeight = useKeyboardHeight();
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
@@ -65,95 +64,97 @@ export default function SettingsProductsScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
-          <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
-        <Text style={styles.headerTitle}>Products</Text>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Add product"
-          onPress={() => router.push('/add-product')}
-          style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
-        >
-          <Feather name="plus" size={15} color={colors.textOnPrimary} />
-          <Text style={styles.addBtnText}>Add</Text>
-        </Pressable>
-      </View>
+      <View style={[styles.mainWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
+          </Pressable>
+          <Text style={styles.headerTitle}>Products</Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Add product"
+            onPress={() => router.push('/add-product')}
+            style={({ pressed }) => [styles.addBtn, pressed && { opacity: 0.85 }]}
+          >
+            <Feather name="plus" size={15} color={colors.textOnPrimary} />
+            <Text style={styles.addBtnText}>Add</Text>
+          </Pressable>
+        </View>
 
-      <View style={styles.searchBox}>
-        <Feather name="search" size={18} color={colors.textMuted} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder="Search products by name…"
-          placeholderTextColor={colors.textMuted}
-          style={styles.searchInput}
-          returnKeyType="search"
-        />
-      </View>
+        <View style={styles.searchBox}>
+          <Feather name="search" size={18} color={colors.textMuted} />
+          <TextInput
+            value={search}
+            onChangeText={setSearch}
+            placeholder="Search products by name…"
+            placeholderTextColor={colors.textMuted}
+            style={styles.searchInput}
+            returnKeyType="search"
+          />
+        </View>
 
-      {filtered.length === 0 ? (
-        <EmptyState
-          icon="package"
-          title={products.length === 0 ? 'No products yet' : 'No products match'}
-          subtitle={
-            products.length === 0
-              ? 'Add your first product with a photo, unit and price. It appears on Home and Referral straight away.'
-              : 'Try a different search.'
-          }
-          actionLabel={products.length === 0 ? 'Add product' : undefined}
-          onAction={products.length === 0 ? () => router.push('/add-product') : undefined}
-        />
-      ) : (
-        <FlatList
-          data={filtered}
-          keyExtractor={(p) => p.id}
-          contentContainerStyle={{
-            paddingBottom:
-              keyboardHeight > 0 ? keyboardHeight + spacing.md : insets.bottom + spacing.lg,
-          }}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-          renderItem={({ item }) => (
-            <View style={styles.row}>
-              <ProductImage uri={item.imageUri} style={styles.thumb} iconSize={22} />
-              <View style={styles.rowCenter}>
-                <Text style={styles.rowName} numberOfLines={1}>
-                  {item.name}
-                </Text>
-                <Text style={styles.rowMeta}>{formatPriceWithUnit(item.price, item.unit)}</Text>
-                <View style={styles.tag}>
-                  <Text style={styles.tagText}>{item.unit === 'kg' ? 'Kg' : 'Unit'}</Text>
+        {filtered.length === 0 ? (
+          <EmptyState
+            icon="package"
+            title={products.length === 0 ? 'No products yet' : 'No products match'}
+            subtitle={
+              products.length === 0
+                ? 'Add your first product with a photo, unit and price. It appears on Home and Referral straight away.'
+                : 'Try a different search.'
+            }
+            actionLabel={products.length === 0 ? 'Add product' : undefined}
+            onAction={products.length === 0 ? () => router.push('/add-product') : undefined}
+          />
+        ) : (
+          <FlatList
+            data={filtered}
+            keyExtractor={(p) => p.id}
+            contentContainerStyle={{
+              paddingBottom: insets.bottom + spacing.lg,
+            }}
+            showsVerticalScrollIndicator={false}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+            renderItem={({ item }) => (
+              <View style={styles.row}>
+                <ProductImage uri={item.imageUri} style={styles.thumb} iconSize={22} />
+                <View style={styles.rowCenter}>
+                  <Text style={styles.rowName} numberOfLines={1}>
+                    {item.name}
+                  </Text>
+                  <Text style={styles.rowMeta}>{formatPriceWithUnit(item.price, item.unit)}</Text>
+                  <View style={styles.tag}>
+                    <Text style={styles.tagText}>{item.unit === 'kg' ? 'Kg' : 'Unit'}</Text>
+                  </View>
                 </View>
+                <Pressable
+                  accessibilityLabel={`Edit ${item.name}`}
+                  onPress={() => router.push(`/add-product?id=${item.id}`)}
+                  style={styles.iconBtn}
+                  hitSlop={6}
+                >
+                  <Feather name="edit-2" size={18} color={colors.primary} />
+                </Pressable>
+                <Pressable
+                  accessibilityLabel={`Delete ${item.name}`}
+                  onPress={() => confirmDelete(item)}
+                  style={styles.iconBtn}
+                  hitSlop={6}
+                >
+                  <Ionicons name="trash-outline" size={18} color={colors.danger} />
+                </Pressable>
               </View>
-              <Pressable
-                accessibilityLabel={`Edit ${item.name}`}
-                onPress={() => router.push(`/add-product?id=${item.id}`)}
-                style={styles.iconBtn}
-                hitSlop={6}
-              >
-                <Feather name="edit-2" size={18} color={colors.primary} />
-              </Pressable>
-              <Pressable
-                accessibilityLabel={`Delete ${item.name}`}
-                onPress={() => confirmDelete(item)}
-                style={styles.iconBtn}
-                hitSlop={6}
-              >
-                <Ionicons name="trash-outline" size={18} color={colors.danger} />
-              </Pressable>
-            </View>
-          )}
-        />
-      )}
+            )}
+          />
+        )}
+      </View>
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  mainWrap: { flex: 1 },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

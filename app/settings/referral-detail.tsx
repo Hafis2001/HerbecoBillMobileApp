@@ -20,6 +20,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useResponsive } from '../../hooks/useResponsive';
 import { showToast } from '../../components/Toast';
 import ReferralFormModal from '../../components/ReferralFormModal';
 import EmptyState from '../../components/EmptyState';
@@ -44,6 +45,7 @@ const formatPurchaseDate = (ms: number): string =>
   }).format(new Date(ms));
 
 export default function ReferralDetailScreen() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const params = useLocalSearchParams<{ code?: string }>();
   const code = params.code ?? '';
   const insets = useSafeAreaInsets();
@@ -173,40 +175,41 @@ export default function ReferralDetailScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
-        <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
-          <Ionicons name="chevron-back" size={24} color={colors.text} />
-        </Pressable>
-        <View style={styles.headerCenter}>
-          <Text style={styles.headerTitle} numberOfLines={1}>
-            {partner.name}
-          </Text>
-          <Text style={styles.headerMeta}>{partner.code}</Text>
+      <View style={[styles.mainWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        <View style={styles.header}>
+          <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
+            <Ionicons name="chevron-back" size={24} color={colors.text} />
+          </Pressable>
+          <View style={styles.headerCenter}>
+            <Text style={styles.headerTitle} numberOfLines={1}>
+              {partner.name}
+            </Text>
+            <Text style={styles.headerMeta}>{partner.code}</Text>
+          </View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${partner.name}`}
+            onPress={() => setFormOpen(true)}
+            hitSlop={8}
+            style={styles.headerBtn}
+          >
+            <Feather name="edit-2" size={18} color={colors.primary} />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Delete ${partner.name}`}
+            onPress={confirmDelete}
+            hitSlop={8}
+            style={styles.headerBtn}
+          >
+            <Feather name="trash-2" size={18} color={colors.danger} />
+          </Pressable>
         </View>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${partner.name}`}
-          onPress={() => setFormOpen(true)}
-          hitSlop={8}
-          style={styles.headerBtn}
-        >
-          <Feather name="edit-2" size={18} color={colors.primary} />
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={`Delete ${partner.name}`}
-          onPress={confirmDelete}
-          hitSlop={8}
-          style={styles.headerBtn}
-        >
-          <Feather name="trash-2" size={18} color={colors.danger} />
-        </Pressable>
-      </View>
 
-      <ScrollView
-        contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
-        showsVerticalScrollIndicator={false}
-      >
+        <ScrollView
+          contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
+          showsVerticalScrollIndicator={false}
+        >
         <View style={[styles.card, cardShadow]}>
           <View style={styles.partnerTop}>
             <View style={styles.avatar}>
@@ -329,6 +332,7 @@ export default function ReferralDetailScreen() {
           </View>
         </View>
       </ScrollView>
+      </View>
 
       <ReferralFormModal
         visible={formOpen}
@@ -342,6 +346,7 @@ export default function ReferralDetailScreen() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  mainWrap: { flex: 1 },
   center: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.sm },
   missingTitle: {
     fontFamily: fonts.semiBold,

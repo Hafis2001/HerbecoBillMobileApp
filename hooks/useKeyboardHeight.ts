@@ -1,9 +1,11 @@
 /**
  * Live keyboard height in pixels (0 while the keyboard is closed).
  *
- * Android edge-to-edge no longer resizes the window for us, so scrollable
- * screens add this to their bottom padding to keep the last rows reachable
- * above the keyboard instead of hidden behind it.
+ * On Android, softwareKeyboardLayoutMode: "resize" in app.json already
+ * handles window resizing automatically at the OS level. Adding keyboard
+ * height on Android causes double-padding (pushing footers and sheets into
+ * the center of the screen, hiding content) and triggers mid-keystroke
+ * re-renders that drop characters. Therefore, on Android this returns 0.
  */
 
 import { useEffect, useState } from 'react';
@@ -13,13 +15,12 @@ export function useKeyboardHeight(): number {
   const [height, setHeight] = useState(0);
 
   useEffect(() => {
-    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    if (Platform.OS !== 'ios') return;
 
-    const show = Keyboard.addListener(showEvent, (event) =>
+    const show = Keyboard.addListener('keyboardWillShow', (event) =>
       setHeight(event.endCoordinates?.height ?? 0),
     );
-    const hide = Keyboard.addListener(hideEvent, () => setHeight(0));
+    const hide = Keyboard.addListener('keyboardWillHide', () => setHeight(0));
 
     return () => {
       show.remove();

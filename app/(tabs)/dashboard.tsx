@@ -27,9 +27,10 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useResponsive } from '../../hooks/useResponsive';
 import { EmptyState } from '../../components/EmptyState';
 import { showToast } from '../../components/Toast';
-import { getInvoiceRecords } from '../../store/invoiceDb';
+import { getInvoiceRecords, getExpenses } from '../../store/invoiceDb';
 import {
   compactINR,
   summarize,
@@ -37,7 +38,7 @@ import {
 } from '../../utils/analytics';
 import { formatINR, formatQuantity } from '../../utils/format';
 import { referralCommission } from '../../utils/pricing';
-import type { InvoiceRecord } from '../../types';
+import type { Expense, InvoiceRecord } from '../../types';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -57,8 +58,9 @@ const RANGE_NOTE: Record<AnalyticsRange, string> = {
 
 export default function DashboardTab() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
+  const { width, isTablet, maxContentWidth } = useResponsive();
   const [records, setRecords] = useState<InvoiceRecord[]>([]);
+  const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [range, setRange] = useState<AnalyticsRange>('day');
@@ -66,7 +68,12 @@ export default function DashboardTab() {
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      setRecords(await getInvoiceRecords());
+      const [invoiceData, expenseData] = await Promise.all([
+        getInvoiceRecords(),
+        getExpenses(),
+      ]);
+      setRecords(invoiceData);
+      setExpenses(expenseData);
     } catch {
       showToast('Could not load sales data', 'error');
     } finally {
@@ -81,11 +88,14 @@ export default function DashboardTab() {
     }, [load]),
   );
 
-  const summary = useMemo(() => summarize(records, range), [records, range]);
+  const summary = useMemo(
+    () => summarize(records, range, new Date(), expenses),
+    [records, range, expenses],
+  );
 
   const maxBucket = Math.max(...summary.buckets.map((b) => b.total), 1);
-  // Narrower phones get a shorter chart so it still fits without scrolling.
-  const chartHeight = width < 360 ? 118 : 148;
+  // Narrower phones get a shorter chart so it still fits without scrolling, tablets get a taller one.
+  const chartHeight = width < 360 ? 118 : isTablet ? 180 : 148;
   // Values above bars only when there is room for them.
   const showValues = range !== 'day';
 
@@ -101,7 +111,7 @@ export default function DashboardTab() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <View style={styles.titleRow}>
           <Ionicons name="bar-chart" size={21} color={colors.primary} />
           <Text style={styles.title}>Dashboard</Text>
@@ -110,7 +120,7 @@ export default function DashboardTab() {
       </View>
 
       {/* Range filter */}
-      <View style={styles.filterRow}>
+      <View style={[styles.filterRow, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         {RANGES.map((item) => {
           const active = range === item.key;
           return (
@@ -130,7 +140,7 @@ export default function DashboardTab() {
 
       {records.length === 0 ? (
         <ScrollView
-          contentContainerStyle={styles.emptyScroll}
+          contentContainerStyle={[styles.emptyScroll, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
@@ -147,7 +157,7 @@ export default function DashboardTab() {
         </ScrollView>
       ) : (
         <ScrollView
-          contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
+          contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
@@ -157,7 +167,7 @@ export default function DashboardTab() {
             />
           }
         >
-          {/* KPI cards — 2 x 2 grid that stays even on narrow phones.
+          {/* KPI cards — 2 x 2 grid that stays even on narrow phones, 4-col on tablet.
               Daily/Weekly/Monthly/Yearly each report their own period, so the
               four filters never show the same numbers. */}
           <View style={styles.kpiHead}>
@@ -167,25 +177,25 @@ export default function DashboardTab() {
             </Text>
           </View>
           <View style={styles.kpiGrid}>
-            <View style={[styles.kpiCard, cardShadow]}>
+            <View style={[styles.kpiCard, cardShadow, isTablet && { width: '23.5%' }]}>
               <Text style={styles.kpiLabel}>Sales</Text>
               <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>
                 {formatINR(summary.sales)}
               </Text>
             </View>
-            <View style={[styles.kpiCard, cardShadow]}>
+            <View style={[styles.kpiCard, cardShadow, isTablet && { width: '23.5%' }]}>
               <Text style={styles.kpiLabel}>Bills</Text>
               <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>
                 {summary.bills}
               </Text>
             </View>
-            <View style={[styles.kpiCard, cardShadow]}>
+            <View style={[styles.kpiCard, cardShadow, isTablet && { width: '23.5%' }]}>
               <Text style={styles.kpiLabel}>Avg bill</Text>
               <Text style={styles.kpiValue} numberOfLines={1} adjustsFontSizeToFit>
                 {formatINR(summary.avgBill)}
               </Text>
             </View>
-            <View style={[styles.kpiCard, cardShadow]}>
+            <View style={[styles.kpiCard, cardShadow, isTablet && { width: '23.5%' }]}>
               <Text style={styles.kpiLabel}>Discounts</Text>
               <Text
                 style={[styles.kpiValue, styles.kpiGold]}
@@ -194,6 +204,99 @@ export default function DashboardTab() {
               >
                 {formatINR(summary.discounts)}
               </Text>
+            </View>
+          </View>
+
+          {/* Cash & Bank Balances */}
+          <View style={styles.kpiHead}>
+            <Text style={styles.kpiHeadTitle}>Cash & Bank Tracking ({summary.periodLabel})</Text>
+          </View>
+          <View style={styles.kpiGrid}>
+            <View style={[styles.kpiCard, cardShadow]}>
+              <View style={styles.cardHeaderSmall}>
+                <Feather name="dollar-sign" size={14} color={colors.gold} />
+                <Text style={styles.kpiLabel}>Cash in Hand</Text>
+              </View>
+              <Text
+                style={[styles.kpiValue, summary.netCash < 0 && { color: colors.danger }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {formatINR(summary.netCash)}
+              </Text>
+              <Text style={styles.balanceSub}>
+                +{formatINR(summary.cashSales)} in · -{formatINR(summary.cashExpenses)} out
+              </Text>
+            </View>
+            <View style={[styles.kpiCard, cardShadow]}>
+              <View style={styles.cardHeaderSmall}>
+                <Feather name="credit-card" size={14} color={colors.primary} />
+                <Text style={styles.kpiLabel}>Bank / UPI</Text>
+              </View>
+              <Text
+                style={[styles.kpiValue, summary.netBank < 0 && { color: colors.danger }]}
+                numberOfLines={1}
+                adjustsFontSizeToFit
+              >
+                {formatINR(summary.netBank)}
+              </Text>
+              <Text style={styles.balanceSub}>
+                +{formatINR(summary.bankSales)} in · -{formatINR(summary.bankExpenses)} out
+              </Text>
+            </View>
+          </View>
+
+          {/* Net Profit & Expenses */}
+          <View style={[styles.profitCard, cardShadow]}>
+            <View style={styles.cardHead}>
+              <View style={styles.profitHeadLeft}>
+                <Feather
+                  name={summary.netProfit >= 0 ? 'trending-up' : 'trending-down'}
+                  size={16}
+                  color={summary.netProfit >= 0 ? colors.primary : colors.danger}
+                />
+                <Text style={styles.cardTitle}>Net Profit ({summary.periodLabel})</Text>
+              </View>
+              <View
+                style={[
+                  styles.profitBadge,
+                  { backgroundColor: summary.netProfit >= 0 ? colors.accentSoft : colors.dangerSoft },
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.profitBadgeText,
+                    { color: summary.netProfit >= 0 ? colors.primary : colors.danger },
+                  ]}
+                >
+                  {summary.netProfit >= 0 ? 'Profit' : 'Loss'}
+                </Text>
+              </View>
+            </View>
+
+            <Text
+              style={[
+                styles.profitAmount,
+                { color: summary.netProfit >= 0 ? colors.primary : colors.danger },
+              ]}
+              numberOfLines={1}
+              adjustsFontSizeToFit
+            >
+              {formatINR(summary.netProfit)}
+            </Text>
+
+            <View style={styles.profitMetricsRow}>
+              <View style={styles.profitMetricCol}>
+                <Text style={styles.metricLabel}>Total Sales</Text>
+                <Text style={styles.metricVal}>{formatINR(summary.sales)}</Text>
+              </View>
+              <View style={styles.metricDivider} />
+              <View style={styles.profitMetricCol}>
+                <Text style={styles.metricLabel}>Expenses</Text>
+                <Text style={[styles.metricVal, { color: colors.danger }]}>
+                  {formatINR(summary.totalExpenses)}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -455,6 +558,70 @@ const styles = StyleSheet.create({
     fontFamily: fonts.bold,
     fontSize: fontSize.lg,
     color: colors.primary,
+  },
+  cardHeaderSmall: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+  },
+  balanceSub: {
+    fontFamily: fonts.regular,
+    fontSize: 9.5,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  profitCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  profitHeadLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  profitBadge: {
+    borderRadius: radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+  },
+  profitBadgeText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 10,
+  },
+  profitAmount: {
+    fontFamily: fonts.bold,
+    fontSize: fontSize.xxl,
+    marginVertical: spacing.xs,
+  },
+  profitMetricsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.xs,
+    paddingTop: spacing.xs + 2,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.divider,
+  },
+  profitMetricCol: {
+    flex: 1,
+  },
+  metricLabel: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs - 1,
+    color: colors.textMuted,
+  },
+  metricVal: {
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.xs + 1,
+    color: colors.text,
+    marginTop: 2,
+  },
+  metricDivider: {
+    width: 1,
+    height: 24,
+    backgroundColor: colors.divider,
+    marginHorizontal: spacing.sm,
   },
   kpiGold: { color: colors.gold },
   chartCard: {

@@ -13,6 +13,7 @@ import { Feather, Ionicons } from '@expo/vector-icons';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import theme from '../constants/theme';
+import { useResponsive } from '../hooks/useResponsive';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -61,6 +62,7 @@ const monthLabel = (year: number, month: number): string =>
   );
 
 export default function DateFilterSheet({ visible, initial, onClose, onApply }: Props) {
+  const { isTablet } = useResponsive();
   const today = useMemo(() => startOfDay(Date.now()), []);
   const [mode, setMode] = useState<'single' | 'range'>('single');
   const [fromMs, setFromMs] = useState<number | null>(null);
@@ -148,9 +150,21 @@ export default function DateFilterSheet({ visible, initial, onClose, onApply }: 
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-      <View style={styles.scrim}>
+      <View style={[styles.scrim, isTablet && { justifyContent: 'center', paddingHorizontal: spacing.md }]}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessibilityLabel="Close" />
-        <View style={[styles.sheet, cardShadow]}>
+        <View
+          style={[
+            styles.sheet,
+            cardShadow,
+            isTablet && {
+              maxWidth: 460,
+              alignSelf: 'center',
+              width: '100%',
+              borderRadius: radius.lg,
+              marginBottom: 0,
+            },
+          ]}
+        >
           <View style={styles.handle} />
 
           <View style={styles.header}>

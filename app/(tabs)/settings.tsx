@@ -12,10 +12,12 @@ import React, { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useResponsive } from '../../hooks/useResponsive';
 import { showToast } from '../../components/Toast';
 import { getReferralOwners } from '../../store/referralDb';
 import { getReferralStats } from '../../store/invoiceDb';
 import { useProductStore } from '../../store/productStore';
+import { usePaymentSettings } from '../../store/paymentSettingsStore';
 import { formatINR } from '../../utils/format';
 import type { ReferralOwner, ReferralStat } from '../../types';
 
@@ -52,9 +54,11 @@ function SettingsRow({ icon, title, meta, onPress }: SettingsRowProps) {
 
 export default function SettingsTab() {
   const insets = useSafeAreaInsets();
+  const { isTablet, maxContentWidth } = useResponsive();
   const products = useProductStore((s) => s.products);
   const [owners, setOwners] = useState<ReferralOwner[]>([]);
   const [stats, setStats] = useState<Record<string, ReferralStat>>({});
+  const paymentSettings = usePaymentSettings((s) => s.settings);
 
   useFocusEffect(
     useCallback(() => {
@@ -84,7 +88,7 @@ export default function SettingsTab() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <View style={styles.titleRow}>
           <Feather name="sliders" size={20} color={colors.primary} />
           <Text style={styles.title}>Settings</Text>
@@ -93,7 +97,7 @@ export default function SettingsTab() {
       </View>
 
       <ScrollView
-        contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }]}
+        contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + spacing.xl }, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}
         showsVerticalScrollIndicator={false}
       >
         <SettingsRow
@@ -118,6 +122,26 @@ export default function SettingsTab() {
                 )} earned at 10%`
           }
           onPress={() => router.push('/settings/referrals')}
+        />
+
+        <SettingsRow
+          icon="credit-card"
+          title="Payment Settings"
+          meta={
+            paymentSettings?.upiId
+              ? `UPI: ${paymentSettings.upiId} · ${paymentSettings.merchantName || 'No name set'}`
+              : paymentSettings?.staticQrUri
+                ? 'Static QR image saved'
+                : 'No payment method configured yet'
+          }
+          onPress={() => router.push('/settings/payment')}
+        />
+
+        <SettingsRow
+          icon="minus-circle"
+          title="Expenses"
+          meta="Track cash and bank expenses — reflects on the dashboard"
+          onPress={() => router.push('/settings/expenses')}
         />
 
         <View style={styles.infoCard}>

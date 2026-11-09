@@ -11,7 +11,6 @@ import React, { useState } from 'react';
 import {
   Alert,
   Image,
-  KeyboardAvoidingView,
   Platform,
   Pressable,
   ScrollView,
@@ -26,6 +25,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { Feather, Ionicons } from '@expo/vector-icons';
 import theme from '../constants/theme';
+import { useResponsive } from '../hooks/useResponsive';
 import { makeId, useProductStore } from '../store/productStore';
 import type { Unit } from '../types';
 import { PrimaryButton } from '../components/PrimaryButton';
@@ -66,6 +66,7 @@ async function persistImage(sourceUri: string): Promise<string> {
 }
 
 export default function AddProductScreen() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const { id } = useLocalSearchParams<{ id?: string }>();
   const editingId = typeof id === 'string' ? id : undefined;
   const editing = useProductStore((s) =>
@@ -139,7 +140,7 @@ export default function AddProductScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <Pressable onPress={cancel} accessibilityLabel="Go back" hitSlop={8}>
           <Feather name="arrow-left" size={22} color={colors.text} />
         </Pressable>
@@ -147,16 +148,17 @@ export default function AddProductScreen() {
         <View style={{ width: 24 }} />
       </View>
 
-      <KeyboardAvoidingView
+      <ScrollView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        contentContainerStyle={[
+          styles.form,
+          { paddingBottom: insets.bottom + spacing.lg },
+          isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' },
+        ]}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+        keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
       >
-        <ScrollView
-          contentContainerStyle={[styles.form, { paddingBottom: insets.bottom + spacing.lg }]}
-          showsVerticalScrollIndicator={false}
-          keyboardShouldPersistTaps="handled"
-          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
-        >
         {/* Photo picker with preview / placeholder */}
         <View style={styles.photoSection}>
           {imageUri ? (
@@ -289,17 +291,21 @@ export default function AddProductScreen() {
             </View>
           )}
         />
-        </ScrollView>
+      </ScrollView>
 
-        <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.sm }]}>
-          <PrimaryButton
-            title={editing ? 'Save changes' : 'Save product'}
-            onPress={onSubmit}
-            disabled={!isValid}
-            icon="check"
-          />
-        </View>
-      </KeyboardAvoidingView>
+      <View
+        style={[
+          styles.footer,
+          { paddingBottom: insets.bottom + spacing.sm },
+        ]}
+      >
+        <PrimaryButton
+          title={editing ? 'Save changes' : 'Save product'}
+          onPress={onSubmit}
+          disabled={!isValid}
+          icon="check"
+        />
+      </View>
     </SafeAreaView>
   );
 }

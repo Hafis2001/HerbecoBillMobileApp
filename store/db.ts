@@ -54,6 +54,16 @@ async function createSchema(db: SQLite.SQLiteDatabase): Promise<void> {
       phone TEXT NOT NULL,
       created_at_ms INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS expenses (
+      id TEXT PRIMARY KEY NOT NULL,
+      description TEXT NOT NULL,
+      amount REAL NOT NULL,
+      paid_via TEXT NOT NULL DEFAULT 'cash',
+      category TEXT,
+      created_at_ms INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_expenses_created ON expenses (created_at_ms DESC);
   `);
 
   // Databases created by an older version of the app gain the new columns here.
@@ -63,6 +73,11 @@ async function createSchema(db: SQLite.SQLiteDatabase): Promise<void> {
   // Per-bill referral commission (10%) the owner has marked as paid.
   await ensureColumn(db, 'invoices', 'commission_paid', 'INTEGER NOT NULL DEFAULT 0');
   await ensureColumn(db, 'invoices', 'commission_paid_ms', 'INTEGER');
+  // Payment method tracking (cash / bank / split).
+  await ensureColumn(db, 'invoices', 'payment_method', 'TEXT');
+  await ensureColumn(db, 'invoices', 'bank_amount', 'REAL NOT NULL DEFAULT 0');
+  await ensureColumn(db, 'invoices', 'cash_amount', 'REAL NOT NULL DEFAULT 0');
+  await ensureColumn(db, 'invoices', 'payment_confirmed', 'INTEGER NOT NULL DEFAULT 0');
 }
 
 /** Opens (once per session) and migrates the app database. */

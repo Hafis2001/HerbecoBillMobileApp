@@ -17,6 +17,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../constants/theme';
+import { useResponsive } from '../hooks/useResponsive';
 import { BUSINESS } from '../utils/billTemplate';
 import { amountInWords, formatDateTime, formatINR, formatQuantity } from '../utils/format';
 import {
@@ -32,14 +33,20 @@ import { useReferralSession } from '../store/referralSession';
 import type { Invoice, CartType } from '../types';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { showToast } from '../components/Toast';
+import UpiQrModal from '../components/UpiQrModal';
+import { updateBillPayment } from '../store/invoiceDb';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
 export default function BillScreen() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const params = useLocalSearchParams<{ data?: string; type?: string }>();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [pdfReady, setPdfReady] = useState(false);
   const insets = useSafeAreaInsets();
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const [paymentLabel, setPaymentLabel] = useState<string | null>(null);
 
   useEffect(() => {
     if (typeof params.data === 'string') {
@@ -107,6 +114,28 @@ export default function BillScreen() {
     }
   };
 
+  const onPaymentConfirm = async (
+    method: 'cash' | 'bank' | 'split',
+    bankAmount: number,
+    cashAmount: number,
+  ) => {
+    if (!invoice) return;
+    setShowPaymentModal(false);
+    try {
+      await updateBillPayment(invoice.number, method, bankAmount, cashAmount, true);
+      setPaymentConfirmed(true);
+      const labels: Record<string, string> = {
+        cash: 'Cash payment confirmed',
+        bank: `Bank/UPI ${formatINR(bankAmount)} confirmed`,
+        split: `Split: Bank ${formatINR(bankAmount)} + Cash ${formatINR(cashAmount)} confirmed`,
+      };
+      setPaymentLabel(labels[method] ?? 'Payment confirmed');
+      showToast('Payment marked as received');
+    } catch {
+      showToast('Could not save payment details', 'error');
+    }
+  };
+
   /**
    * The cart was already emptied when the bill was saved. A referral sale
    * returns to the Referral tab, which now asks for the next referral ID.
@@ -133,7 +162,7 @@ export default function BillScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <Pressable
           onPress={() => router.dismissTo('/(tabs)')}
           accessibilityLabel="Back to cart"
@@ -151,7 +180,7 @@ export default function BillScreen() {
 
       {/* In-app invoice preview (mirrors the PDF layout) */}
       <ScrollView
-        contentContainerStyle={styles.body}
+        contentContainerStyle={[styles.body, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}
         showsVerticalScrollIndicator={false}
       >
         {/* Brand band */}
@@ -267,27 +296,54 @@ export default function BillScreen() {
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: insets.bottom + spacing.md }]}>
-        <PrimaryButton
-          title="Send on WhatsApp"
-          onPress={() => void shareOnWhatsApp()}
-          icon="message-circle"
-        />
-        {/* Two half-width buttons keep the row balanced on every screen
-            width instead of stacking three full-width ones. */}
-        <View style={styles.footerRow}>
-          <View style={styles.footerCol}>
+        <View style={[styles.footerInner, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+          {/* Payment status / confirmation row */}
+          {paymentConfirmed ? (
+            <View style={styles.paymentConfirmedBand}>
+              <Ionicons name="checkmark-circle" size={18} color={colors.primary} />
+              <Text style={styles.paymentConfirmedText}>{paymentLabel}</Text>
+            </View>
+          ) : (
             <PrimaryButton
-              title={pdfReady ? 'Share PDF' : 'Generating…'}
-              onPress={() => void sharePdf()}
+              title="Record Payment"
+              onPress={() => setShowPaymentModal(true)}
+              icon="credit-card"
               variant="ghost"
-              icon="share-2"
             />
-          </View>
-          <View style={styles.footerCol}>
-            <PrimaryButton title="New Sale" onPress={newSale} variant="gold" icon="refresh-cw" />
+          )}
+
+          <PrimaryButton
+            title="Send on WhatsApp"
+            onPress={() => void shareOnWhatsApp()}
+            icon="message-circle"
+          />
+          {/* Two half-width buttons keep the row balanced on every screen
+              width instead of stacking three full-width ones. */}
+          <View style={styles.footerRow}>
+            <View style={styles.footerCol}>
+              <PrimaryButton
+                title={pdfReady ? 'Share PDF' : 'Generating…'}
+                onPress={() => void sharePdf()}
+                variant="ghost"
+                icon="share-2"
+              />
+            </View>
+            <View style={styles.footerCol}>
+              <PrimaryButton title="New Sale" onPress={newSale} variant="gold" icon="refresh-cw" />
+            </View>
           </View>
         </View>
       </View>
+
+      {invoice ? (
+        <UpiQrModal
+          visible={showPaymentModal}
+          invoiceNumber={invoice.number}
+          grandTotal={invoice.grandTotal}
+          onConfirm={(method, bankAmt, cashAmt) => void onPaymentConfirm(method, bankAmt, cashAmt)}
+          onClose={() => setShowPaymentModal(false)}
+        />
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -586,6 +642,9 @@ const styles = StyleSheet.create({
     borderTopColor: colors.border,
     paddingTop: spacing.sm,
   },
+  footerInner: {
+    width: '100%',
+  },
   footerRow: {
     flexDirection: 'row',
     gap: spacing.sm,
@@ -593,5 +652,21 @@ const styles = StyleSheet.create({
   },
   footerCol: {
     flex: 1,
+  },
+  paymentConfirmedBand: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    backgroundColor: colors.accentSoft,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm + 4,
+    marginBottom: spacing.sm,
+  },
+  paymentConfirmedText: {
+    flex: 1,
+    fontFamily: fonts.semiBold,
+    fontSize: fontSize.sm,
+    color: colors.primary,
   },
 });

@@ -9,7 +9,7 @@
  *   year  -> last 5 calendar years
  */
 
-import type { InvoiceRecord, Unit } from '../types';
+import type { Expense, InvoiceRecord, Unit } from '../types';
 
 export type AnalyticsRange = 'day' | 'week' | 'month' | 'year';
 
@@ -45,6 +45,22 @@ export interface AnalyticsSummary {
   periodLabel: string;
   /** Sum of every bucket — 0 means nothing to draw in the trend chart. */
   trendTotal: number;
+  /** Sales received in cash. */
+  cashSales: number;
+  /** Sales received via bank / UPI. */
+  bankSales: number;
+  /** Expenses paid in cash. */
+  cashExpenses: number;
+  /** Expenses paid via bank / UPI. */
+  bankExpenses: number;
+  /** Total expenses in this period. */
+  totalExpenses: number;
+  /** In-hand cash balance = cashSales - cashExpenses. */
+  netCash: number;
+  /** Net bank balance = bankSales - bankExpenses. */
+  netBank: number;
+  /** Net profit = total sales - total expenses. */
+  netProfit: number;
 }
 
 const startOfDay = (d: Date): Date => new Date(d.getFullYear(), d.getMonth(), d.getDate());
@@ -178,6 +194,7 @@ export function summarize(
   records: InvoiceRecord[],
   range: AnalyticsRange,
   now: Date = new Date(),
+  expenses: Expense[] = [],
 ): AnalyticsSummary {
   const buckets = buildBuckets(range, now);
 
@@ -201,6 +218,37 @@ export function summarize(
   const referralSales = inPeriod
     .filter((r) => r.type === 'referral')
     .reduce((sum, r) => sum + r.grandTotal, 0);
+
+  let cashSales = 0;
+  let bankSales = 0;
+  for (const record of inPeriod) {
+    if (record.paymentMethod === 'bank') {
+      bankSales += record.bankAmount > 0 ? record.bankAmount : record.grandTotal;
+    } else if (record.paymentMethod === 'split') {
+      bankSales += record.bankAmount;
+      cashSales += record.cashAmount;
+    } else {
+      // Cash or legacy bills without paymentMethod
+      cashSales += record.cashAmount > 0 ? record.cashAmount : record.grandTotal;
+    }
+  }
+
+  // Filter expenses for this period
+  const inPeriodExpenses = expenses.filter(
+    (e) => e.createdAtMs >= period.startMs && e.createdAtMs < period.endMs,
+  );
+
+  const cashExpenses = inPeriodExpenses
+    .filter((e) => e.paidVia === 'cash')
+    .reduce((sum, e) => sum + e.amount, 0);
+  const bankExpenses = inPeriodExpenses
+    .filter((e) => e.paidVia === 'bank')
+    .reduce((sum, e) => sum + e.amount, 0);
+  const totalExpenses = cashExpenses + bankExpenses;
+
+  const netCash = cashSales - cashExpenses;
+  const netBank = bankSales - bankExpenses;
+  const netProfit = sales - totalExpenses;
 
   const byProduct = new Map<string, TopItem>();
   for (const record of inPeriod) {
@@ -230,5 +278,13 @@ export function summarize(
     maxRevenue: topItems[0]?.revenue ?? 0,
     periodLabel: period.label,
     trendTotal: buckets.reduce((sum, b) => sum + b.total, 0),
+    cashSales,
+    bankSales,
+    cashExpenses,
+    bankExpenses,
+    totalExpenses,
+    netCash,
+    netBank,
+    netProfit,
   };
 }

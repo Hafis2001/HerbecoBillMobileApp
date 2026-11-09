@@ -55,6 +55,11 @@ export interface Invoice {
   createdAt: string; // ISO date-time
   /** Referral partner credited with this sale (referral flow only). */
   referral?: ReferralRef;
+  /** Payment method chosen at billing: cash, bank or split. */
+  paymentMethod?: PaymentMethod;
+  bankAmount?: number;
+  cashAmount?: number;
+  paymentConfirmed?: boolean;
 }
 
 /** Minimal referral info carried on a bill. */
@@ -97,6 +102,14 @@ export interface InvoiceRecord {
   commissionPaid: boolean;
   /** Milliseconds epoch of the payment, only set with `commissionPaid`. */
   commissionPaidAtMs: number | null;
+  /** Payment method used: cash, bank (UPI) or split. Null for older bills. */
+  paymentMethod: 'cash' | 'bank' | 'split' | null;
+  /** Amount paid via bank/UPI. 0 or null for cash-only bills. */
+  bankAmount: number;
+  /** Amount paid in cash. 0 or null for bank-only bills. */
+  cashAmount: number;
+  /** True once cashier confirmed payment was received. */
+  paymentConfirmed: boolean;
 }
 
 /** A referral partner saved in Settings → Referrals. */
@@ -134,4 +147,30 @@ export interface ReferralCommissionLine {
   commission: number;
   paid: boolean;
   paidAtMs: number | null;
+}
+
+/** How the customer paid for a bill. */
+export type PaymentMethod = 'cash' | 'bank' | 'split';
+
+/** Payment details recorded with a bill. */
+export interface BillPayment {
+  method: PaymentMethod;
+  /** Amount paid via UPI/bank. 0 for cash-only. */
+  bankAmount: number;
+  /** Amount paid in cash. 0 for bank-only. */
+  cashAmount: number;
+  /** True once the cashier confirmed payment received. */
+  confirmed: boolean;
+}
+
+/** An expense entry saved by the owner. */
+export interface Expense {
+  id: string;
+  description: string;
+  amount: number;
+  /** Whether the expense was paid from cash on hand or via bank/UPI. */
+  paidVia: 'cash' | 'bank';
+  createdAtMs: number;
+  /** Optional category label. */
+  category?: string;
 }

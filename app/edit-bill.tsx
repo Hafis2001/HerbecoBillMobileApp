@@ -24,7 +24,7 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../constants/theme';
-import { useKeyboardHeight } from '../hooks/useKeyboardHeight';
+import { useResponsive } from '../hooks/useResponsive';
 import { useProductStore } from '../store/productStore';
 import { getInvoiceRecord, saveInvoice } from '../store/invoiceDb';
 import { invalidateInvoicePdf } from '../utils/pdf';
@@ -56,9 +56,9 @@ const numericText = (text: string): string =>
   text.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
 
 export default function EditBillScreen() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const params = useLocalSearchParams<{ id?: string }>();
   const insets = useSafeAreaInsets();
-  const keyboardHeight = useKeyboardHeight();
   const products = useProductStore((s) => s.products);
 
   const [record, setRecord] = useState<InvoiceRecord | null>(null);
@@ -244,7 +244,7 @@ export default function EditBillScreen() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <Pressable onPress={() => router.back()} accessibilityLabel="Go back" hitSlop={8}>
           <Ionicons name="chevron-back" size={24} color={colors.text} />
         </Pressable>
@@ -261,7 +261,8 @@ export default function EditBillScreen() {
       <ScrollView
         contentContainerStyle={[
           styles.body,
-          { paddingBottom: insets.bottom + keyboardHeight + 110 },
+          { paddingBottom: insets.bottom + 110 },
+          isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' },
         ]}
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
@@ -431,15 +432,17 @@ export default function EditBillScreen() {
       <View
         style={[
           styles.footer,
-          { paddingBottom: insets.bottom + spacing.sm + keyboardHeight },
+          { paddingBottom: insets.bottom + spacing.sm },
         ]}
       >
-        <PrimaryButton
-          title={saving ? 'Saving…' : `Save changes · ${formatINR(totals.grandTotal)}`}
-          onPress={() => void onSave()}
-          disabled={saving || lines.length === 0 || discountTooBig}
-          icon="check"
-        />
+        <View style={[{ width: '100%' }, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center' }]}>
+          <PrimaryButton
+            title={saving ? 'Saving…' : `Save changes · ${formatINR(totals.grandTotal)}`}
+            onPress={() => void onSave()}
+            disabled={saving || lines.length === 0 || discountTooBig}
+            icon="check"
+          />
+        </View>
       </View>
 
       {/* Product picker */}
@@ -458,7 +461,8 @@ export default function EditBillScreen() {
           <View
             style={[
               styles.sheet,
-              { paddingBottom: insets.bottom + spacing.md + keyboardHeight },
+              { paddingBottom: insets.bottom + spacing.md },
+              isTablet && { maxWidth: 520, alignSelf: 'center', width: '100%', borderRadius: radius.lg },
             ]}
           >
             <View style={styles.sheetHead}>

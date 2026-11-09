@@ -13,6 +13,7 @@ import React from 'react';
 import { StyleSheet, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useResponsive } from '../../hooks/useResponsive';
 
 const { colors, fonts } = theme;
 
@@ -21,10 +22,10 @@ const BAR_CONTENT_HEIGHT = 56;
 
 export default function TabsLayout() {
   const insets = useSafeAreaInsets();
-  const { width } = useWindowDimensions();
-  // Six tabs share the width, so labels stay small enough that "Dashboard"
-  // never clips on a 320–360dp phone.
-  const labelSize = width < 360 ? 8 : 9;
+  const { width, isTablet } = useResponsive();
+  // Tabs share the width, scaled nicely for tablets vs narrow phones.
+  const labelSize = width < 360 ? 8 : isTablet ? 12 : 9;
+  const iconSize = isTablet ? 24 : 20;
 
   return (
     <Tabs
@@ -34,7 +35,7 @@ export default function TabsLayout() {
         tabBarInactiveTintColor: colors.textMuted,
         tabBarStyle: [
           styles.tabBar,
-          { height: BAR_CONTENT_HEIGHT + insets.bottom, paddingBottom: insets.bottom + 4 },
+          { height: (isTablet ? BAR_CONTENT_HEIGHT + 10 : BAR_CONTENT_HEIGHT) + insets.bottom, paddingBottom: insets.bottom + 4 },
         ],
         tabBarLabelStyle: [styles.label, { fontSize: labelSize }],
         tabBarItemStyle: styles.item,
@@ -48,7 +49,7 @@ export default function TabsLayout() {
         options={{
           title: 'Dashboard',
           tabBarIcon: ({ color }) => (
-            <Feather name="bar-chart-2" size={20} color={String(color)} />
+            <Feather name="bar-chart-2" size={iconSize} color={String(color)} />
           ),
         }}
       />
@@ -57,7 +58,7 @@ export default function TabsLayout() {
         options={{
           title: 'Home',
           tabBarIcon: ({ color }) => (
-            <Feather name="home" size={20} color={String(color)} />
+            <Feather name="home" size={iconSize} color={String(color)} />
           ),
         }}
       />
@@ -66,7 +67,7 @@ export default function TabsLayout() {
         options={{
           title: 'Referral',
           tabBarIcon: ({ color }) => (
-            <Feather name="users" size={20} color={String(color)} />
+            <Feather name="users" size={iconSize} color={String(color)} />
           ),
         }}
       />
@@ -75,7 +76,7 @@ export default function TabsLayout() {
         options={{
           title: 'Bills',
           tabBarIcon: ({ color }) => (
-            <Feather name="file-text" size={20} color={String(color)} />
+            <Feather name="file-text" size={iconSize} color={String(color)} />
           ),
         }}
       />
@@ -84,7 +85,7 @@ export default function TabsLayout() {
         options={{
           title: 'Settings',
           tabBarIcon: ({ color }) => (
-            <Feather name="sliders" size={20} color={String(color)} />
+            <Feather name="sliders" size={iconSize} color={String(color)} />
           ),
         }}
       />

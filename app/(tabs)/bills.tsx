@@ -24,6 +24,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
+import { useResponsive } from '../../hooks/useResponsive';
 import { EmptyState } from '../../components/EmptyState';
 import { PrimaryButton } from '../../components/PrimaryButton';
 import { showToast } from '../../components/Toast';
@@ -149,6 +150,7 @@ function ActionButton({ icon, label, color, accessibilityLabel, onPress, busy }:
 }
 
 export default function BillsTab() {
+  const { isTablet, maxContentWidth } = useResponsive();
   const [records, setRecords] = useState<InvoiceRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [busyNumber, setBusyNumber] = useState<string | null>(null);
@@ -374,7 +376,7 @@ export default function BillsTab() {
 
   return (
     <SafeAreaView style={styles.screen} edges={['top', 'left', 'right']}>
-      <View style={styles.header}>
+      <View style={[styles.header, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <View style={styles.titleRow}>
           <Feather name="file-text" size={21} color={colors.primary} />
           <Text style={styles.title}>Bills & Sales</Text>
@@ -384,7 +386,7 @@ export default function BillsTab() {
         </Text>
       </View>
 
-      <View style={styles.filterWrap}>
+      <View style={[styles.filterWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <ScrollView
           horizontal
           showsHorizontalScrollIndicator={false}
@@ -450,60 +452,62 @@ export default function BillsTab() {
         </ScrollView>
       </View>
 
-      {loading ? (
-        <View style={styles.loadingWrap}>
-          <ActivityIndicator size="large" color={colors.primary} />
-        </View>
-      ) : records.length === 0 ? (
-        <EmptyState
-          icon="file-text"
-          title="No bills yet"
-          subtitle="Every bill you generate is saved here with a Pending status until you mark it Uploaded."
-        />
-      ) : filtered.length === 0 ? (
-        <EmptyState
-          icon="calendar"
-          title="No bills for this date"
-          subtitle="Try another day, a From – To range, or one of the quick filters."
-          actionLabel="Reset filter"
-          onAction={() => {
-            setDateFilter(null);
-            setRange('all');
-          }}
-        />
-      ) : (
-        <>
-          <View style={styles.toolbar}>
-            <View style={styles.toolbarLeft}>
-              <Text style={styles.toolbarText} numberOfLines={1}>
-                {filtered.length} bill{filtered.length === 1 ? '' : 's'} ·{' '}
-                {dateFilter ? dateLabel : rangeLabel}
-                {pendingCount > 0 ? ` · ${pendingCount} pending` : ''}
-              </Text>
-              <Text style={styles.toolbarTotal}>{formatINR(filteredTotal)}</Text>
-            </View>
-            <PrimaryButton
-              title={exporting ? '…' : `Excel (${filtered.length})`}
-              small
-              icon="download"
-              onPress={() => void onExport()}
-              disabled={exporting}
-            />
+      <View style={[styles.mainWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        {loading ? (
+          <View style={styles.loadingWrap}>
+            <ActivityIndicator size="large" color={colors.primary} />
           </View>
-
-          <SectionList
-            sections={sections}
-            keyExtractor={(r) => r.id}
-            renderItem={renderItem}
-            renderSectionHeader={renderSectionHeader}
-            stickySectionHeadersEnabled={false}
-            contentContainerStyle={styles.list}
-            showsVerticalScrollIndicator={false}
+        ) : records.length === 0 ? (
+          <EmptyState
+            icon="file-text"
+            title="No bills yet"
+            subtitle="Every bill you generate is saved here with a Pending status until you mark it Uploaded."
           />
-        </>
-      )}
+        ) : filtered.length === 0 ? (
+          <EmptyState
+            icon="calendar"
+            title="No bills for this date"
+            subtitle="Try another day, a From – To range, or one of the quick filters."
+            actionLabel="Reset filter"
+            onAction={() => {
+              setDateFilter(null);
+              setRange('all');
+            }}
+          />
+        ) : (
+          <>
+            <View style={styles.toolbar}>
+              <View style={styles.toolbarLeft}>
+                <Text style={styles.toolbarText} numberOfLines={1}>
+                  {filtered.length} bill{filtered.length === 1 ? '' : 's'} ·{' '}
+                  {dateFilter ? dateLabel : rangeLabel}
+                  {pendingCount > 0 ? ` · ${pendingCount} pending` : ''}
+                </Text>
+                <Text style={styles.toolbarTotal}>{formatINR(filteredTotal)}</Text>
+              </View>
+              <PrimaryButton
+                title={exporting ? '…' : `Excel (${filtered.length})`}
+                small
+                icon="download"
+                onPress={() => void onExport()}
+                disabled={exporting}
+              />
+            </View>
 
-      <View style={styles.footerWrap}>
+            <SectionList
+              sections={sections}
+              keyExtractor={(r) => r.id}
+              renderItem={renderItem}
+              renderSectionHeader={renderSectionHeader}
+              stickySectionHeadersEnabled={false}
+              contentContainerStyle={styles.list}
+              showsVerticalScrollIndicator={false}
+            />
+          </>
+        )}
+      </View>
+
+      <View style={[styles.footerWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
         <PrimaryButton
           title="Refresh list"
           variant="ghost"
@@ -528,6 +532,7 @@ export default function BillsTab() {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.background },
+  mainWrap: { flex: 1 },
   header: {
     paddingHorizontal: spacing.md,
     paddingTop: spacing.sm,
