@@ -1,9 +1,10 @@
 /**
  * Settings tab — the last tab in the app.
  *
- * Two separate pages live behind it: Products (add / edit / delete catalogue
- * items) and Referral partners (each has a referral ID, a name and a phone
- * number; bills made with that ID credit the partner 10%).
+ * The pages behind it: Products (catalogue items), Stock Management
+ * (materials and finished goods with their ledger), Production (recipes
+ * and batches) and Referral partners (each has a referral ID, a name and
+ * a phone number; bills made with that ID credit the partner 10%).
  */
 
 import { Feather } from '@expo/vector-icons';
@@ -16,6 +17,13 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { showToast } from '../../components/Toast';
 import { getReferralOwners } from '../../store/referralDb';
 import { getReferralStats } from '../../store/invoiceDb';
+import {
+  getStockItems,
+  getProductionSummary,
+  summarizeStock,
+  type ProductionSummary,
+  type StockSummary,
+} from '../../store/stockDb';
 import { useProductStore } from '../../store/productStore';
 import { usePaymentSettings } from '../../store/paymentSettingsStore';
 import { formatINR } from '../../utils/format';
@@ -58,6 +66,8 @@ export default function SettingsTab() {
   const products = useProductStore((s) => s.products);
   const [owners, setOwners] = useState<ReferralOwner[]>([]);
   const [stats, setStats] = useState<Record<string, ReferralStat>>({});
+  const [stockSummary, setStockSummary] = useState<StockSummary | null>(null);
+  const [productionSummary, setProductionSummary] = useState<ProductionSummary | null>(null);
   const paymentSettings = usePaymentSettings((s) => s.settings);
 
   useFocusEffect(
@@ -65,13 +75,17 @@ export default function SettingsTab() {
       let cancelled = false;
       void (async () => {
         try {
-          const [list, referralStats] = await Promise.all([
+          const [list, referralStats, stockItems, prodSummary] = await Promise.all([
             getReferralOwners(),
             getReferralStats(),
+            getStockItems(),
+            getProductionSummary(),
           ]);
           if (cancelled) return;
           setOwners(list);
           setStats(referralStats);
+          setStockSummary(summarizeStock(stockItems));
+          setProductionSummary(prodSummary);
         } catch {
           if (!cancelled) showToast('Could not load settings', 'error');
         }
@@ -109,6 +123,38 @@ export default function SettingsTab() {
               : `${productCount} ${productCount === 1 ? 'product' : 'products'} · add, edit or remove items`
           }
           onPress={() => router.push('/settings/products')}
+        />
+
+        <SettingsRow
+          icon="box"
+          title="Stock Management"
+          meta={
+            stockSummary && stockSummary.totalItems > 0
+              ? `${stockSummary.totalItems} ${stockSummary.totalItems === 1 ? 'item' : 'items'} · ${formatINR(
+                  stockSummary.totalValue,
+                )} in stock · ${
+                  stockSummary.lowCount + stockSummary.outCount > 0
+                    ? `${stockSummary.lowCount} low · ${stockSummary.outCount} out`
+                    : 'all healthy'
+                }`
+              : 'Track materials and finished goods — restocks, usage and sales'
+          }
+          onPress={() => router.push('/settings/stock')}
+        />
+
+        <SettingsRow
+          icon="tool"
+          title="Production"
+          meta={
+            productionSummary && productionSummary.batchCount > 0
+              ? `${productionSummary.batchCount} ${
+                  productionSummary.batchCount === 1 ? 'batch' : 'batches'
+                } · ${productionSummary.unitsProduced} units · ${
+                  productionSummary.recipeCount
+                } ${productionSummary.recipeCount === 1 ? 'recipe' : 'recipes'}`
+              : 'Recipes and batches — produce finished goods from materials'
+          }
+          onPress={() => router.push('/production')}
         />
 
         <SettingsRow

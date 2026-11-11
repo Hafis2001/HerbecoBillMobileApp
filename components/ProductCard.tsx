@@ -20,6 +20,8 @@ interface ProductCardProps {
   /** "home" shows the base price; "referral" shows +10% with strikethrough. */
   flow: 'home' | 'referral';
   quantityInCart: number;
+  stockText?: string;
+  isOutOfStock?: boolean;
   onAdd: () => void;
   /** Stepper callback; call onAdd() again or setQuantity depending on flow. */
   onQuantityChange: (quantity: number) => void;
@@ -32,6 +34,8 @@ export function ProductCard({
   product,
   flow,
   quantityInCart,
+  stockText,
+  isOutOfStock,
   onAdd,
   onQuantityChange,
   onRemoveFromCart,
@@ -66,6 +70,12 @@ export function ProductCard({
         >
           {formatPriceWithUnit(flowPrice, product.unit)}
         </Text>
+
+        {stockText ? (
+          <Text style={[styles.stockText, isOutOfStock && styles.stockOutText]} numberOfLines={1}>
+            {stockText}
+          </Text>
+        ) : null}
       </View>
 
       <View style={styles.footer}>
@@ -144,6 +154,15 @@ const styles = StyleSheet.create({
     color: colors.primary,
     marginTop: 2,
     marginBottom: spacing.sm,
+  },
+  stockText: {
+    fontFamily: fonts.medium,
+    fontSize: 10,
+    color: colors.primary,
+    marginBottom: 4,
+  },
+  stockOutText: {
+    color: colors.danger,
   },
   referralPrice: {
     color: colors.gold,

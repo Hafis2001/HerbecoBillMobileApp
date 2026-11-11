@@ -14,10 +14,11 @@
  */
 
 import { Feather, Ionicons } from '@expo/vector-icons';
-import { useFocusEffect } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import React, { useCallback, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Pressable,
   RefreshControl,
   ScrollView,
   StyleSheet,
@@ -31,6 +32,10 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { EmptyState } from '../../components/EmptyState';
 import { showToast } from '../../components/Toast';
 import { getInvoiceRecords, getExpenses } from '../../store/invoiceDb';
+import {
+  getProductionSummary,
+  type ProductionSummary,
+} from '../../store/stockDb';
 import {
   compactINR,
   summarize,
@@ -61,6 +66,7 @@ export default function DashboardTab() {
   const { width, isTablet, maxContentWidth } = useResponsive();
   const [records, setRecords] = useState<InvoiceRecord[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [prodSummary, setProdSummary] = useState<ProductionSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [range, setRange] = useState<AnalyticsRange>('day');
@@ -68,12 +74,14 @@ export default function DashboardTab() {
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const [invoiceData, expenseData] = await Promise.all([
+      const [invoiceData, expenseData, productionData] = await Promise.all([
         getInvoiceRecords(),
         getExpenses(),
+        getProductionSummary(),
       ]);
       setRecords(invoiceData);
       setExpenses(expenseData);
+      setProdSummary(productionData);
     } catch {
       showToast('Could not load sales data', 'error');
     } finally {
@@ -154,6 +162,7 @@ export default function DashboardTab() {
             title="No sales yet"
             subtitle="Generate your first bill and the charts here fill up automatically."
           />
+          <ProductionCard summary={prodSummary} />
         </ScrollView>
       ) : (
         <ScrollView
@@ -425,17 +434,62 @@ export default function DashboardTab() {
                     </Text>
                   </View>
                 </View>
-              ))
+              )              )
             )}
           </View>
+
+          {/* Production overview */}
+          <ProductionCard summary={prodSummary} />
         </ScrollView>
       )}
     </SafeAreaView>
   );
 }
 
-/** One labelled progress bar for the home/referral split. */
-function SplitBar({
+/** Compact production overview that links to the Production home. */
+function ProductionCard({ summary }: { summary: ProductionSummary | null }) {
+  const hasProduction = Boolean(summary && summary.batchCount > 0);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="Open production"
+      onPress={() => router.push('/production')}
+      style={({ pressed }) => [styles.prodCard, cardShadow, pressed && { opacity: 0.85 }]}
+    >
+      <View style={styles.cardHead}>
+        <View style={styles.profitHeadLeft}>
+          <Feather name="tool" size={16} color={colors.primary} />
+          <Text style={styles.cardTitle}>Production</Text>
+        </View>
+        <Feather name="chevron-right" size={18} color={colors.textMuted} />
+      </View>
+      {hasProduction && summary ? (
+        <View style={styles.prodMetricsRow}>
+          <View style={styles.profitMetricCol}>
+            <Text style={styles.metricLabel}>Batches</Text>
+            <Text style={styles.metricVal}>{summary.batchCount}</Text>
+          </View>
+          <View style={styles.metricDivider} />
+          <View style={styles.profitMetricCol}>
+            <Text style={styles.metricLabel}>Units produced</Text>
+            <Text style={styles.metricVal}>{summary.unitsProduced}</Text>
+          </View>
+          <View style={styles.metricDivider} />
+          <View style={styles.profitMetricCol}>
+            <Text style={styles.metricLabel}>Recipes</Text>
+            <Text style={styles.metricVal}>{summary.recipeCount}</Text>
+          </View>
+        </View>
+      ) : (
+        <Text style={styles.prodEmpty}>
+          No production yet — create recipes and produce finished goods from your materials.
+        </Text>
+      )}
+    </Pressable>
+  );
+}
+
+/** One labelled progress bar for the home/referral split. */function SplitBar({
   label,
   value,
   total,
@@ -790,6 +844,21 @@ const styles = StyleSheet.create({
     marginTop: 4,
     fontFamily: fonts.regular,
     fontSize: fontSize.xs - 1,
+    color: colors.textMuted,
+  },
+  prodCard: {
+    marginTop: spacing.sm,
+    backgroundColor: colors.card,
+    borderRadius: radius.md,
+    padding: spacing.md,
+  },
+  prodMetricsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  prodEmpty: {
+    fontFamily: fonts.regular,
+    fontSize: fontSize.xs,
     color: colors.textMuted,
   },
 });

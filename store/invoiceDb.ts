@@ -16,6 +16,7 @@ import type {
   ReferralStat,
 } from '../types';
 import { getDatabase } from './db';
+import { settleBillStockForInvoice, reverseBillStock } from './stockDb';
 import { referralCommission, round2 } from '../utils/pricing';
 
 /** Raw SQLite row shape for the invoices table. */
@@ -113,6 +114,15 @@ export async function saveInvoice(invoice: Invoice): Promise<void> {
     cashAmt,
     confirmed,
   );
+
+  // Keep linked stock in sync with this bill (delta-based, so re-saving the
+  // same bill never deducts twice). Guarded — billing must never break on
+  // a stock problem.
+  try {
+    await settleBillStockForInvoice(invoice.number, invoice.items);
+  } catch (e) {
+    console.log('settleBillStockForInvoice failed', invoice.number, e);
+  }
 }
 
 /** One saved bill by its id (which is also the invoice number), or null. */
@@ -144,6 +154,20 @@ export async function setInvoiceStatus(id: string, status: InvoiceStatus): Promi
 
 export async function deleteInvoice(id: string): Promise<void> {
   const db = await getDatabase();
+  // Reverse this bill's stock deduction before the bill itself disappears,
+  // so the ledger keeps a matching sale_reversal. Guarded so deleting a
+  // bill never breaks on a stock problem.
+  try {
+    const row = await db.getFirstAsync<{ number: string }>(
+      'SELECT number FROM invoices WHERE id = ?',
+      id,
+    );
+    if (row?.number) {
+      await reverseBillStock(row.number);
+    }
+  } catch (e) {
+    console.log('reverseBillStock failed', id, e);
+  }
   await db.runAsync('DELETE FROM invoices WHERE id = ?', id);
 }
 

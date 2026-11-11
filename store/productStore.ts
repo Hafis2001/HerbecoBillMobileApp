@@ -17,6 +17,7 @@ export interface ProductInput {
 interface ProductState {
   products: Product[];
   addProduct: (input: ProductInput) => void;
+  upsertProduct: (product: Product) => void;
   updateProduct: (id: string, patch: Partial<Product>) => void;
   deleteProduct: (id: string) => void;
 }
@@ -37,6 +38,15 @@ export const useProductStore = create<ProductState>()(
             { ...input, id: makeId(), createdAt: Date.now() } satisfies Product,
           ],
         })),
+      upsertProduct: (product) =>
+        set((state) => {
+          const exists = state.products.some((p) => p.id === product.id);
+          return {
+            products: exists
+              ? state.products.map((p) => (p.id === product.id ? { ...p, ...product } : p))
+              : [...state.products, product],
+          };
+        }),
       updateProduct: (id, patch) =>
         set((state) => ({
           products: state.products.map((p) => (p.id === id ? { ...p, ...patch } : p)),

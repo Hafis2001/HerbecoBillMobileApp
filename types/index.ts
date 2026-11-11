@@ -174,3 +174,136 @@ export interface Expense {
   /** Optional category label. */
   category?: string;
 }
+
+/** ─── Stock & Production ─────────────────────────────────────────────────── */
+
+/** How a stock item is measured. */
+export type StockUnitType = 'weight' | 'volume' | 'piece';
+
+/** Unit the owner types quantities in; stored internally as g / ml / pc. */
+export type StockDisplayUnit =
+  | 'kg'
+  | 'g'
+  | 'l'
+  | 'ml'
+  | 'pc'
+  | 'piece'
+  | 'bottle'
+  | 'packet'
+  | 'box'
+  | string;
+
+/** Raw material for production/purchases vs finished good produced in-house. */
+export type StockKind = 'material' | 'finished';
+
+/** In Stock / Low Stock / Out of Stock. */
+export type StockStatus = 'in' | 'low' | 'out';
+
+/** One stock item in Settings → Stock Management. */
+export interface StockItem {
+  id: string;
+  name: string;
+  category: string;
+  kind: StockKind;
+  unitType: StockUnitType;
+  displayUnit: StockDisplayUnit;
+  /** Minimum alert level, in base units (g / ml / pc). */
+  minQtyBase: number;
+  /** Purchase price per display unit, when known. */
+  purchasePrice?: number;
+  notes?: string;
+  /** Set for finished goods — the recipe this item is produced by. */
+  recipeId?: string;
+  createdAtMs: number;
+  /** Current balance in base units (sum of the ledger). */
+  balance: number;
+}
+
+/** Every stock change recorded in the ledger. */
+export type StockTransactionType =
+  | 'opening'
+  | 'restock'
+  | 'adjust'
+  | 'production_use'
+  | 'production_out'
+  | 'sale'
+  | 'sale_reversal';
+
+/** One ledger row: the reason, the quantity and the resulting balance. */
+export interface StockTransaction {
+  id: string;
+  itemId: string;
+  type: StockTransactionType;
+  /** Signed change in base units (negative = stock consumed). */
+  qtyChange: number;
+  balanceAfter: number;
+  /** Bill number or production batch number this row belongs to. */
+  refType?: 'bill' | 'batch' | null;
+  refId?: string | null;
+  note?: string;
+  /** Purchase price captured at restock time, per display unit. */
+  unitPrice?: number;
+  supplier?: string;
+  createdAtMs: number;
+}
+
+/** One ingredient line of a production recipe. */
+export interface RecipeItemLine {
+  id: string;
+  recipeId: string;
+  stockItemId: string;
+  /** Base units (g / ml / pc) consumed per ONE finished unit. */
+  qtyPerUnitBase: number;
+}
+
+/** A production product and the recipe that makes it. */
+export interface Recipe {
+  id: string;
+  name: string;
+  imageUri?: string;
+  /** Selling rate / price per finished unit. */
+  price: number;
+  /** How the finished product is counted: pieces, bottles, packets, boxes, kg, etc. */
+  finishedUnit: string;
+  notes?: string;
+  /** Finished-goods stock item produced by this recipe. */
+  finishedItemId: string;
+  /** Associated billing catalogue product ID (if synced). */
+  productId?: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  /** Ingredient lines (always loaded with the recipe). */
+  items: RecipeItemLine[];
+}
+
+/** One completed production batch. */
+export interface ProductionBatch {
+  id: string;
+  batchNo: string;
+  recipeId: string;
+  recipeName: string;
+  finishedUnit: string;
+  /** Finished units produced (pieces, bottles, packets, boxes, or kg). */
+  quantity: number;
+  finishedQtyBase: number;
+  finishedItemId: string;
+  /** Ingredient quantities used at production time — frozen forever. */
+  snapshot: Array<{
+    stockItemId: string;
+    name: string;
+    qtyPerUnitBase: number;
+    usedBase: number;
+    unitType: StockUnitType;
+    unitLabel?: string;
+  }>;
+  notes?: string;
+  createdAtMs: number;
+}
+
+/** Connects a billing catalogue product to a stock item for sales deduction. */
+export interface ProductStockLink {
+  productId: string;
+  stockItemId: string;
+  /** Base units consumed per one unit sold of the billing product. */
+  qtyBasePerUnit: number;
+}

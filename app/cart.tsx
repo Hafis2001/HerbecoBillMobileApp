@@ -36,6 +36,7 @@ import { useReferralCart } from '../store/referralCartStore';
 import { useInvoiceCounter } from '../store/invoiceStore';
 import { useReferralSession } from '../store/referralSession';
 import { usePaymentSettings, buildUpiUri } from '../store/paymentSettingsStore';
+import { checkSaleStock } from '../store/stockDb';
 import type { CartItem, CartType, CustomerFormValues, Invoice, PaymentMethod } from '../types';
 import CartItemRow from '../components/CartItem';
 import QuantityEntryModal from '../components/QuantityEntryModal';
@@ -44,6 +45,7 @@ import PrimaryButton from '../components/PrimaryButton';
 import SummaryCard from '../components/SummaryCard';
 import { showToast } from '../components/Toast';
 import { formatINR } from '../utils/format';
+import { formatBaseQty } from '../utils/stock';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -139,8 +141,29 @@ export default function CartScreen() {
     cartApi.getState().setDiscount(Number.isFinite(value) ? value : 0);
   };
 
-  const buildInvoice = (rawName: string, rawPhone: string) => {
+  const buildInvoice = async (rawName: string, rawPhone: string) => {
     if (cartItems.length === 0) return;
+    // Products linked to stock cannot be sold below the current balance.
+    try {
+      const shortfalls = await checkSaleStock(cartItems);
+      if (shortfalls.length > 0) {
+        const lines = shortfalls.map(
+          (s) =>
+            `• ${s.name} — need ${formatBaseQty(s.requiredBase, s.unitType)}, have ${formatBaseQty(
+              s.availableBase,
+              s.unitType,
+            )}`,
+        );
+        Alert.alert(
+          'Not enough stock',
+          `Some products are linked to stock that is too low:\n\n${lines.join('\n')}\n\nRestock in Settings → Stock Management, or unlink the product.`,
+          [{ text: 'OK', style: 'cancel' }],
+        );
+        return;
+      }
+    } catch (e) {
+      console.log('checkSaleStock failed', e);
+    }
     const phoneDigits = rawName ? rawPhone.replace(/\D/g, '').replace(/^(91|0)/, '') : '';
     const invoice: Invoice = {
       number: useInvoiceCounter.getState().nextInvoiceNumber(),

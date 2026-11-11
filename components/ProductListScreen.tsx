@@ -5,8 +5,8 @@
  */
 
 import { Feather } from '@expo/vector-icons';
-import { router, useLocalSearchParams } from 'expo-router';
-import React, { useMemo, useState } from 'react';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
+import React, { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   Platform,
@@ -20,6 +20,8 @@ import theme from '../constants/theme';
 import { useResponsive } from '../hooks/useResponsive';
 import { formatINR, formatPriceWithUnit } from '../utils/format';
 import { getReferralPrice, round2 } from '../utils/pricing';
+import { getProductStockBalances, syncRecipeBillingProducts, type ProductStockInfo } from '../store/stockDb';
+import { formatBaseQty } from '../utils/stock';
 import type { CartItem, Product, Unit } from '../types';
 import AppHeader from './AppHeader';
 import CategoryChip from './CategoryChip';
@@ -71,6 +73,23 @@ export function ProductListScreen({
   const [filter, setFilter] = useState<'all' | Unit>('all');
   /** Weight product whose quantity is being typed; null when the sheet is closed. */
   const [entryProduct, setEntryProduct] = useState<Product | null>(null);
+  const [stockBalances, setStockBalances] = useState<Record<string, ProductStockInfo>>({});
+
+  const reloadStock = useCallback(async () => {
+    try {
+      await syncRecipeBillingProducts().catch(() => {});
+      const balances = await getProductStockBalances();
+      setStockBalances(balances);
+    } catch (e) {
+      console.log('reloadStock error', e);
+    }
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      void reloadStock();
+    }, [reloadStock]),
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -201,12 +220,26 @@ export function ProductListScreen({
             renderItem={({ item }) => {
               const qty = qtyInCart(item.id);
               const flowPrice = unitPriceFor(item);
+              const stockInfo = stockBalances[item.id];
+              let stockText: string | undefined;
+              let isOutOfStock = false;
+              if (stockInfo) {
+                if (stockInfo.unitType === 'weight') {
+                  stockText = `Available: ${formatBaseQty(stockInfo.balanceBase, 'weight')}`;
+                  isOutOfStock = stockInfo.balanceBase <= 0;
+                } else {
+                  stockText = `Available: ${formatBaseQty(stockInfo.availableUnits, 'piece', stockInfo.displayUnit)}`;
+                  isOutOfStock = stockInfo.availableUnits <= 0;
+                }
+              }
               return (
                 <ProductListRow
                   product={item}
                   flow={isReferral ? 'referral' : 'home'}
                   quantityInCart={qty}
                   flowPrice={flowPrice}
+                  stockText={stockText}
+                  isOutOfStock={isOutOfStock}
                   onAdd={() => handleAdd(item)}
                   onQuantityChange={(q) => setQuantity(item.id, q)}
                   onRemoveFromCart={() => setQuantity(item.id, 0)}
@@ -266,6 +299,8 @@ interface ProductListRowProps {
   flow: 'home' | 'referral';
   quantityInCart: number;
   flowPrice: number;
+  stockText?: string;
+  isOutOfStock?: boolean;
   onAdd: () => void;
   onQuantityChange: (qty: number) => void;
   onRemoveFromCart: () => void;
@@ -277,6 +312,8 @@ function ProductListRow({
   flow,
   quantityInCart,
   flowPrice,
+  stockText,
+  isOutOfStock,
   onAdd,
   onQuantityChange,
   onRemoveFromCart,
@@ -301,10 +338,17 @@ function ProductListRow({
             {formatPriceWithUnit(flowPrice, product.unit)}
           </Text>
         </View>
-        <View style={[styles.tag, isReferral && styles.referralTag]}>
-          <Text style={[styles.tagText, isReferral && styles.referralTagText]}>
-            {isReferral ? '+10% Referral' : product.unit === 'kg' ? 'By weight (kg)' : 'Per unit'}
-          </Text>
+        <View style={styles.badgeRow}>
+          <View style={[styles.tag, isReferral && styles.referralTag]}>
+            <Text style={[styles.tagText, isReferral && styles.referralTagText]}>
+              {isReferral ? '+10% Referral' : product.unit === 'kg' ? 'By weight (kg)' : 'Per unit'}
+            </Text>
+          </View>
+          {stockText ? (
+            <Text style={[styles.rowStockText, isOutOfStock && styles.rowStockOutText]}>
+              {stockText}
+            </Text>
+          ) : null}
         </View>
       </View>
       <View style={styles.actionWrap}>
@@ -425,13 +469,27 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     textDecorationLine: 'line-through',
   },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs + 2,
+    flexWrap: 'wrap',
+    marginTop: 3,
+  },
+  rowStockText: {
+    fontFamily: fonts.semiBold,
+    fontSize: 11,
+    color: colors.primary,
+  },
+  rowStockOutText: {
+    color: colors.danger,
+  },
   tag: {
     alignSelf: 'flex-start',
     backgroundColor: colors.accentSoft,
     borderRadius: radius.pill,
     paddingHorizontal: 7,
     paddingVertical: 1,
-    marginTop: 3,
   },
   tagText: {
     fontFamily: fonts.medium,

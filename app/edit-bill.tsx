@@ -13,6 +13,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   Modal,
   Pressable,
@@ -27,9 +28,11 @@ import theme from '../constants/theme';
 import { useResponsive } from '../hooks/useResponsive';
 import { useProductStore } from '../store/productStore';
 import { getInvoiceRecord, saveInvoice } from '../store/invoiceDb';
+import { checkSaleStock } from '../store/stockDb';
 import { invalidateInvoicePdf } from '../utils/pdf';
 import { computeTotals, getReferralPrice, round2 } from '../utils/pricing';
 import { formatINR, formatPriceWithUnit } from '../utils/format';
+import { formatBaseQty } from '../utils/stock';
 import { showToast } from '../components/Toast';
 import PrimaryButton from '../components/PrimaryButton';
 import SummaryCard from '../components/SummaryCard';
@@ -185,6 +188,29 @@ export default function EditBillScreen() {
     if (items.length === 0) {
       showToast('Keep at least one item with a quantity', 'error');
       return;
+    }
+
+    // Products linked to stock cannot be sold below the current balance.
+    // The bill's own existing deduction is credited back for this check.
+    try {
+      const shortfalls = await checkSaleStock(items, record.number);
+      if (shortfalls.length > 0) {
+        const shortLines = shortfalls.map(
+          (s) =>
+            `• ${s.name} — need ${formatBaseQty(s.requiredBase, s.unitType)}, have ${formatBaseQty(
+              s.availableBase,
+              s.unitType,
+            )}`,
+        );
+        Alert.alert(
+          'Not enough stock',
+          `Some products are linked to stock that is too low:\n\n${shortLines.join('\n')}\n\nRestock in Settings → Stock Management, or unlink the product.`,
+          [{ text: 'OK', style: 'cancel' }],
+        );
+        return;
+      }
+    } catch (e) {
+      console.log('checkSaleStock failed', e);
     }
 
     const invoice: Invoice = {
