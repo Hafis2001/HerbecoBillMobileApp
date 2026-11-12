@@ -26,6 +26,7 @@
 
 import type {
   CartItem,
+  Product,
   ProductStockLink,
   ProductionBatch,
   Recipe,
@@ -41,7 +42,7 @@ import type {
 } from '../types';
 import { getDatabase } from './db';
 import { makeId, useProductStore } from './productStore';
-import { stockStatus } from '../utils/stock';
+import { formatBaseQty, stockStatus } from '../utils/stock';
 
 import type { SQLiteDatabase } from 'expo-sqlite';
 
@@ -146,6 +147,24 @@ async function ensureSchema(db: SQLiteDatabase): Promise<void> {
 
       await ensureColumn(db, 'recipes', 'price', 'REAL NOT NULL DEFAULT 0');
       await ensureColumn(db, 'recipes', 'product_id', 'TEXT');
+
+      const dedupeDone = await db.getFirstAsync<{ value: string }>(
+        `SELECT value FROM stock_meta WHERE key = 'stock_dedupe_v1'`,
+      );
+      if (!dedupeDone) {
+        try {
+          await db.withTransactionAsync(async () => {
+            await repairDuplicateStockItemsWithDb(db);
+          });
+          await db.runAsync(
+            `INSERT INTO stock_meta (key, value) VALUES ('stock_dedupe_v1', ?)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+            [String(Date.now())],
+          );
+        } catch (e) {
+          console.log('stock dedupe error', e);
+        }
+      }
     })();
   }
   return schemaPromise;
@@ -397,6 +416,273 @@ export async function createStockItem(
   return id;
 }
 
+// ─── Product-backed stock items ────────────────────────────────────────────
+
+interface EnsureProductStockOptions {
+  category?: string;
+  notes?: string;
+}
+
+interface EnsureProductStockResult {
+  stockItemId: string;
+  created: boolean;
+}
+
+/**
+ * Returns the stock item linked to a billing product, creating it (and the
+ * link) on first use. Every product therefore has exactly one stock entry,
+ * no matter whether it was reached from Stock, Production or billing.
+ */
+async function ensureProductStockItemWithDb(
+  db: SQLiteDatabase,
+  product: Product,
+  kind: StockKind,
+  options?: EnsureProductStockOptions,
+): Promise<EnsureProductStockResult> {
+  const isKg = product.unit === 'kg';
+  const unitType: StockUnitType = isKg ? 'weight' : 'piece';
+  const displayUnit: StockDisplayUnit = isKg ? 'kg' : 'piece';
+  const qtyBasePerUnit = isKg ? 1000 : 1;
+  const now = Date.now();
+  const trimmedName = product.name.trim();
+
+  const link = await db.getFirstAsync<{ stock_item_id: string }>(
+    'SELECT stock_item_id FROM product_stock_links WHERE product_id = ?',
+    product.id,
+  );
+  if (link) {
+    const existing = await db.getFirstAsync<{ id: string }>(
+      'SELECT id FROM stock_items WHERE id = ?',
+      link.stock_item_id,
+    );
+    if (existing) return { stockItemId: existing.id, created: false };
+  }
+
+  // If a stock item with the same name already exists (for example, a material
+  // added before products were linked), reuse it instead of creating a duplicate.
+  const sameName = await db.getFirstAsync<{ id: string }>(
+    `SELECT i.id
+       FROM stock_items i
+      WHERE LOWER(TRIM(i.name)) = LOWER(TRIM(?))
+        AND i.unit_type = ?
+        AND i.kind = ?
+      ORDER BY (SELECT COUNT(*) FROM stock_transactions t WHERE t.item_id = i.id) DESC,
+               (SELECT COUNT(*) FROM product_stock_links l WHERE l.stock_item_id = i.id) DESC,
+               i.created_at_ms ASC
+      LIMIT 1`,
+    trimmedName,
+    unitType,
+    kind,
+  );
+  if (sameName) {
+    await db.runAsync(
+      `INSERT INTO product_stock_links (product_id, stock_item_id, qty_base_per_unit, created_at_ms)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(product_id) DO UPDATE SET
+         stock_item_id = excluded.stock_item_id,
+         qty_base_per_unit = excluded.qty_base_per_unit`,
+      [product.id, sameName.id, qtyBasePerUnit, now],
+    );
+    return { stockItemId: sameName.id, created: false };
+  }
+
+  const id = makeId();
+  await db.runAsync(
+    `INSERT INTO stock_items
+       (id, name, category, kind, unit_type, display_unit, min_qty_base, purchase_price, notes, recipe_id, created_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, 0, NULL, ?, NULL, ?)`,
+    [
+      id,
+      trimmedName,
+      options?.category?.trim() || 'General',
+      kind,
+      unitType,
+      displayUnit,
+      options?.notes?.trim() || null,
+      now,
+    ],
+  );
+  await db.runAsync(
+    `INSERT INTO product_stock_links (product_id, stock_item_id, qty_base_per_unit, created_at_ms)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(product_id) DO UPDATE SET
+       stock_item_id = excluded.stock_item_id,
+       qty_base_per_unit = excluded.qty_base_per_unit`,
+    [product.id, id, qtyBasePerUnit, now],
+  );
+  return { stockItemId: id, created: true };
+}
+
+/**
+ * Collapses accidental duplicate stock items (same name and unit type) into
+ * one canonical item. This keeps production deductions and stock balances on
+ * the same row when older data created a second item for the same material.
+ */
+async function repairDuplicateStockItemsWithDb(db: SQLiteDatabase): Promise<void> {
+  const groups = await db.getAllAsync<{ name_norm: string; unit_type: string; kind: StockKind }>(
+    `SELECT LOWER(TRIM(name)) AS name_norm, unit_type, kind
+       FROM stock_items
+      GROUP BY LOWER(TRIM(name)), unit_type, kind
+      HAVING COUNT(*) > 1`,
+  );
+
+  for (const group of groups) {
+    const rows = await db.getAllAsync<{
+      id: string;
+      txn_count: number;
+      link_count: number;
+      created_at_ms: number;
+    }>(
+      `SELECT i.id,
+              (SELECT COUNT(*) FROM stock_transactions t WHERE t.item_id = i.id) AS txn_count,
+              (SELECT COUNT(*) FROM product_stock_links l WHERE l.stock_item_id = i.id) AS link_count,
+              i.created_at_ms
+         FROM stock_items i
+        WHERE LOWER(TRIM(i.name)) = ? AND i.unit_type = ? AND i.kind = ?
+        ORDER BY txn_count DESC, link_count DESC, i.created_at_ms ASC`,
+      group.name_norm,
+      group.unit_type,
+      group.kind,
+    );
+    if (rows.length < 2) continue;
+
+    const canonical = rows[0];
+    for (const duplicate of rows.slice(1)) {
+      await db.runAsync('UPDATE stock_transactions SET item_id = ? WHERE item_id = ?', [
+        canonical.id,
+        duplicate.id,
+      ]);
+
+      const duplicateLines = await db.getAllAsync<{
+        id: string;
+        recipe_id: string;
+        qty_per_unit_base: number;
+      }>(
+        'SELECT id, recipe_id, qty_per_unit_base FROM recipe_items WHERE stock_item_id = ?',
+        duplicate.id,
+      );
+      for (const line of duplicateLines) {
+        const existingLine = await db.getFirstAsync<{
+          id: string;
+          qty_per_unit_base: number;
+        }>(
+          `SELECT id, qty_per_unit_base FROM recipe_items
+            WHERE recipe_id = ? AND stock_item_id = ? LIMIT 1`,
+          line.recipe_id,
+          canonical.id,
+        );
+        if (existingLine) {
+          const mergedQty =
+            Math.round((existingLine.qty_per_unit_base + line.qty_per_unit_base) * 10000) / 10000;
+          await db.runAsync('UPDATE recipe_items SET qty_per_unit_base = ? WHERE id = ?', [
+            mergedQty,
+            existingLine.id,
+          ]);
+          await db.runAsync('DELETE FROM recipe_items WHERE id = ?', [line.id]);
+        } else {
+          await db.runAsync('UPDATE recipe_items SET stock_item_id = ? WHERE id = ?', [
+            canonical.id,
+            line.id,
+          ]);
+        }
+      }
+
+      await db.runAsync('UPDATE product_stock_links SET stock_item_id = ? WHERE stock_item_id = ?', [
+        canonical.id,
+        duplicate.id,
+      ]);
+      await db.runAsync('UPDATE recipes SET finished_item_id = ? WHERE finished_item_id = ?', [
+        canonical.id,
+        duplicate.id,
+      ]);
+      await db.runAsync(
+        'UPDATE production_batches SET finished_item_id = ? WHERE finished_item_id = ?',
+        [canonical.id, duplicate.id],
+      );
+      await db.runAsync('DELETE FROM stock_items WHERE id = ?', [duplicate.id]);
+    }
+
+    // Recompute the running balance after the merged ledgers are combined.
+    const txns = await db.getAllAsync<{ id: string; qty_change: number }>(
+      'SELECT id, qty_change FROM stock_transactions WHERE item_id = ? ORDER BY created_at_ms ASC, rowid ASC',
+      canonical.id,
+    );
+    let running = 0;
+    for (const txn of txns) {
+      running += txn.qty_change;
+      const balanceAfter = Math.round((running + Number.EPSILON) * 10000) / 10000;
+      await db.runAsync('UPDATE stock_transactions SET balance_after = ? WHERE id = ?', [
+        balanceAfter,
+        txn.id,
+      ]);
+    }
+  }
+}
+
+/** Public wrapper: ensures a product has a stock item and returns its id. */
+export async function ensureProductStockItem(
+  product: Product,
+  kind: StockKind = 'material',
+  options?: EnsureProductStockOptions,
+): Promise<string> {
+  const db = await getStockDb();
+  const result = await ensureProductStockItemWithDb(db, product, kind, options);
+  return result.stockItemId;
+}
+
+export interface AddProductStockInput {
+  product: Product;
+  category: string;
+  displayUnit: StockDisplayUnit;
+  minQtyBase: number;
+  purchasePrice?: number;
+  notes?: string;
+  /** Opening stock for a new item, or the quantity added to an existing one. */
+  qtyBase: number;
+}
+
+/**
+ * Adds stock for a product picked from the Products catalogue. The first
+ * call creates the product's stock item (with an opening entry); later calls
+ * reuse it and record a normal restock.
+ */
+export async function addStockForProduct(
+  input: AddProductStockInput,
+): Promise<{ stockItemId: string; created: boolean }> {
+  const db = await getStockDb();
+  let result: EnsureProductStockResult = { stockItemId: '', created: false };
+  await db.withTransactionAsync(async () => {
+    const ensured = await ensureProductStockItemWithDb(db, input.product, 'material', {
+      category: input.category,
+    });
+    result = ensured;
+    await db.runAsync(
+      `UPDATE stock_items
+          SET name = ?, category = ?, display_unit = ?, min_qty_base = ?, purchase_price = ?, notes = ?
+        WHERE id = ?`,
+      [
+        input.product.name.trim(),
+        input.category.trim() || 'General',
+        input.displayUnit,
+        Math.max(0, Math.round((input.minQtyBase + Number.EPSILON) * 10000) / 10000),
+        input.purchasePrice ?? null,
+        input.notes?.trim() || null,
+        ensured.stockItemId,
+      ],
+    );
+    if (input.qtyBase > 0) {
+      await insertTxn(db, {
+        itemId: ensured.stockItemId,
+        type: ensured.created ? 'opening' : 'restock',
+        qtyChange: input.qtyBase,
+        unitPrice: input.purchasePrice,
+        note: ensured.created ? 'Opening stock' : undefined,
+      });
+    }
+  });
+  return result;
+}
+
 /**
  * Updates the editable details. Allows changing display unit within the
  * same unit type without losing balance accuracy.
@@ -459,6 +745,38 @@ export interface RestockInput {
 
 export async function recordRestock(input: RestockInput): Promise<void> {
   const db = await getStockDb();
+
+  // Produced items are made from their recipe, not bought directly. Restocking
+  // one therefore runs the same ingredient deduction as a production batch.
+  const recipe = await db.getFirstAsync<{ id: string; finished_unit: string }>(
+    `SELECT id, finished_unit FROM recipes
+      WHERE finished_item_id = ?
+      ORDER BY created_at_ms DESC
+      LIMIT 1`,
+    input.itemId,
+  );
+  if (recipe) {
+    const finishedUnit = recipe.finished_unit.trim().toLowerCase();
+    const quantity = finishedUnit === 'kg' ? input.qtyBase / 1000 : input.qtyBase;
+    const result = await createProductionBatch(
+      recipe.id,
+      quantity,
+      input.note,
+      input.createdAtMs,
+    );
+    if (!result.ok) {
+      const shortageText = (result.shortages ?? [])
+        .map((shortage) => `${shortage.name} needs ${formatBaseQty(shortage.shortfallBase, shortage.unitType)} more`)
+        .join(', ');
+      throw new Error(
+        shortageText
+          ? `Not enough ingredients to produce this item: ${shortageText}`
+          : 'Not enough ingredients to produce this item.',
+      );
+    }
+    return;
+  }
+
   await db.withTransactionAsync(async () => {
     await insertTxn(db, {
       itemId: input.itemId,
@@ -562,6 +880,8 @@ export interface RecipeInput {
   /** Finished unit, e.g. 'bottle', 'piece', 'packet', 'box', 'kg'. */
   finishedUnit: string;
   notes?: string;
+  /** Billing product selected from the catalogue. */
+  productId?: string;
   items: RecipeIngredientInput[];
 }
 
@@ -626,29 +946,41 @@ export async function getRecipe(id: string): Promise<Recipe | null> {
 }
 
 /**
- * Creates a recipe together with its finished-goods stock item in one
- * transaction, and automatically registers / links it to the billing catalogue.
+ * Creates a recipe for a product picked from the billing catalogue. The
+ * product's stock item is created on first use and reused afterwards, so
+ * Stock, Production and billing all point at the same stock entry.
  */
 export async function saveRecipe(input: RecipeInput): Promise<string> {
   const db = await getStockDb();
   const recipeId = makeId();
-  const finishedItemId = makeId();
   const now = Date.now();
   const trimmedName = input.name.trim();
   const unitLower = (input.finishedUnit || 'piece').trim().toLowerCase();
   const isKg = unitLower === 'kg';
-  const unitType: StockUnitType = isKg ? 'weight' : 'piece';
-  const displayUnit = isKg ? 'kg' : (input.finishedUnit.trim() || 'piece');
   const billingUnit: Unit = isKg ? 'kg' : 'unit';
 
-  // 1. Ensure or find product in useProductStore
-  let productId = makeId();
+  // 1. Resolve the selected product (falling back to a name match/copy).
   const currentProducts = useProductStore.getState().products;
-  const existingProduct = currentProducts.find(
-    (p) => p.name.trim().toLowerCase() === trimmedName.toLowerCase(),
-  );
+  let productId = input.productId;
+  let existingProduct = productId
+    ? currentProducts.find((p) => p.id === productId)
+    : undefined;
+  if (!existingProduct) {
+    existingProduct = currentProducts.find(
+      (p) => p.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+    );
+  }
+  if (!productId) productId = existingProduct?.id ?? makeId();
+
+  const product: Product = {
+    id: productId,
+    name: trimmedName,
+    price: input.price,
+    unit: billingUnit,
+    imageUri: input.imageUri,
+    createdAt: existingProduct?.createdAt ?? now,
+  };
   if (existingProduct) {
-    productId = existingProduct.id;
     useProductStore.getState().updateProduct(productId, {
       name: trimmedName,
       price: input.price,
@@ -656,32 +988,17 @@ export async function saveRecipe(input: RecipeInput): Promise<string> {
       imageUri: input.imageUri,
     });
   } else {
-    useProductStore.getState().upsertProduct({
-      id: productId,
-      name: trimmedName,
-      price: input.price,
-      unit: billingUnit,
-      imageUri: input.imageUri,
-      createdAt: now,
-    });
+    useProductStore.getState().upsertProduct(product);
   }
 
+  let finishedItemId = '';
   await db.withTransactionAsync(async () => {
-    // 2. Insert finished good stock item
-    await db.runAsync(
-      `INSERT INTO stock_items
-         (id, name, category, kind, unit_type, display_unit, min_qty_base, purchase_price, notes, recipe_id, created_at_ms)
-       VALUES (?, ?, 'Finished Goods', 'finished', ?, ?, 0, NULL, ?, ?, ?)`,
-      [
-        finishedItemId,
-        trimmedName,
-        unitType,
-        displayUnit,
-        `Produced from the ${trimmedName} recipe`,
-        recipeId,
-        now,
-      ],
-    );
+    // 2. Use the product's stock item (created on first use, reused after).
+    const ensured = await ensureProductStockItemWithDb(db, product, 'finished', {
+      category: 'Finished Goods',
+      notes: `Produced from the ${trimmedName} recipe`,
+    });
+    finishedItemId = ensured.stockItemId;
 
     // 3. Insert recipe with price, finished_unit, and product_id
     await db.runAsync(
@@ -745,27 +1062,38 @@ export async function updateRecipe(
     const recipe = await loadRecipe(db, id);
     if (!recipe) throw new Error('Recipe not found.');
 
-    let productId = recipe.productId;
-    if (!productId) {
-      const existingProduct = useProductStore.getState().products.find(
+    const currentProducts = useProductStore.getState().products;
+    let productId = input.productId ?? recipe.productId;
+    let existingProduct = productId
+      ? currentProducts.find((p) => p.id === productId)
+      : undefined;
+    if (!existingProduct) {
+      existingProduct = currentProducts.find(
         (p) => p.name.trim().toLowerCase() === trimmedName.toLowerCase(),
       );
-      productId = existingProduct ? existingProduct.id : makeId();
     }
+    if (!productId) productId = existingProduct?.id ?? makeId();
 
-    // Update in useProductStore
-    useProductStore.getState().upsertProduct({
+    const product: Product = {
       id: productId,
       name: trimmedName,
       price: input.price,
       unit: billingUnit,
       imageUri: input.imageUri,
-      createdAt: recipe.createdAtMs,
+      createdAt: existingProduct?.createdAt ?? recipe.createdAtMs,
+    };
+    useProductStore.getState().upsertProduct(product);
+
+    // Reuse (or create) the selected product's stock item.
+    const ensured = await ensureProductStockItemWithDb(db, product, 'finished', {
+      category: 'Finished Goods',
+      notes: `Produced from the ${trimmedName} recipe`,
     });
+    const finishedItemId = ensured.stockItemId;
 
     await db.runAsync(
       `UPDATE recipes
-          SET name = ?, image_uri = ?, price = ?, finished_unit = ?, notes = ?, product_id = ?, updated_at_ms = ?
+          SET name = ?, image_uri = ?, price = ?, finished_unit = ?, notes = ?, product_id = ?, finished_item_id = ?, updated_at_ms = ?
         WHERE id = ?`,
       [
         trimmedName,
@@ -774,14 +1102,15 @@ export async function updateRecipe(
         input.finishedUnit.trim(),
         input.notes?.trim() || null,
         productId,
+        finishedItemId,
         now,
         id,
       ],
     );
 
     await db.runAsync(
-      'UPDATE stock_items SET name = ?, unit_type = ?, display_unit = ? WHERE id = ? AND kind = ?',
-      [trimmedName, unitType, displayUnit, recipe.finishedItemId, 'finished'],
+      'UPDATE stock_items SET name = ?, unit_type = ?, display_unit = ? WHERE id = ?',
+      [trimmedName, unitType, displayUnit, finishedItemId],
     );
 
     await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', id);
@@ -800,7 +1129,7 @@ export async function updateRecipe(
        ON CONFLICT(product_id) DO UPDATE SET
          stock_item_id = excluded.stock_item_id,
          qty_base_per_unit = excluded.qty_base_per_unit`,
-      [productId, recipe.finishedItemId, qtyBasePerUnit, now],
+      [productId, finishedItemId, qtyBasePerUnit, now],
     );
   });
 }
@@ -857,6 +1186,7 @@ export async function syncRecipeBillingProducts(): Promise<void> {
  */
 export interface ProductStockInfo {
   availableUnits: number;
+  stockItemId: string;
   stockItemName: string;
   unitType: StockUnitType;
   displayUnit: string;
@@ -867,13 +1197,14 @@ export async function getProductStockBalances(): Promise<Record<string, ProductS
   const db = await getStockDb();
   const rows = await db.getAllAsync<{
     product_id: string;
+    stock_item_id: string;
     qty_base_per_unit: number;
     stock_name: string;
     unit_type: string;
     display_unit: string;
     balance: number | null;
   }>(
-    `SELECT l.product_id, l.qty_base_per_unit, s.name AS stock_name, s.unit_type, s.display_unit,
+    `SELECT l.product_id, l.stock_item_id, l.qty_base_per_unit, s.name AS stock_name, s.unit_type, s.display_unit,
             COALESCE((SELECT SUM(t.qty_change) FROM stock_transactions t WHERE t.item_id = s.id), 0) AS balance
        FROM product_stock_links l
        JOIN stock_items s ON s.id = l.stock_item_id`,
@@ -886,6 +1217,7 @@ export async function getProductStockBalances(): Promise<Record<string, ProductS
     const available = balance > 0 ? Math.floor(balance / qtyBase) : 0;
     result[r.product_id] = {
       availableUnits: available,
+      stockItemId: r.stock_item_id,
       stockItemName: r.stock_name,
       unitType: (r.unit_type as StockUnitType) || 'piece',
       displayUnit: r.display_unit || 'piece',
@@ -911,10 +1243,18 @@ export async function deleteRecipe(id: string): Promise<void> {
       id,
     );
     await db.runAsync('DELETE FROM recipe_items WHERE recipe_id = ?', id);
-    await db.runAsync('DELETE FROM product_stock_links WHERE stock_item_id = ?', row?.finished_item_id ?? '');
     await db.runAsync('DELETE FROM recipes WHERE id = ?', id);
     if (row?.finished_item_id) {
-      await db.runAsync('DELETE FROM stock_items WHERE id = ?', row.finished_item_id);
+      // The finished stock item now belongs to a product (product_stock_links),
+      // so keep it and its history when the recipe is removed.
+      const link = await db.getFirstAsync<{ product_id: string }>(
+        'SELECT product_id FROM product_stock_links WHERE stock_item_id = ? LIMIT 1',
+        row.finished_item_id,
+      );
+      if (!link) {
+        await db.runAsync('DELETE FROM product_stock_links WHERE stock_item_id = ?', row.finished_item_id);
+        await db.runAsync('DELETE FROM stock_items WHERE id = ?', row.finished_item_id);
+      }
     }
   });
 }
@@ -997,11 +1337,12 @@ export async function createProductionBatch(
   recipeId: string,
   quantity: number,
   notes?: string,
+  createdAtMs?: number,
 ): Promise<CreateBatchResult> {
   const db = await getStockDb();
   let result: CreateBatchResult | undefined;
   await db.withTransactionAsync(async () => {
-    result = await buildProductionBatch(db, recipeId, quantity, notes);
+    result = await buildProductionBatch(db, recipeId, quantity, notes, createdAtMs);
   });
   if (!result) throw new Error('Could not record the production batch.');
   return result;
@@ -1013,10 +1354,12 @@ async function buildProductionBatch(
   recipeId: string,
   quantity: number,
   notes?: string,
+  createdAtMs?: number,
 ): Promise<CreateBatchResult> {
   const recipe = await loadRecipe(db, recipeId);
   if (!recipe) throw new Error('Recipe not found.');
   if (quantity <= 0) throw new Error('Production quantity must be greater than zero.');
+  const createdAt = createdAtMs ?? Date.now();
 
   const shortages: Array<{ name: string; shortfallBase: number; unitType: StockUnitType }> = [];
   const snapshot: ProductionBatch['snapshot'] = [];
@@ -1073,6 +1416,7 @@ async function buildProductionBatch(
           refType: 'batch',
           refId: batchNo,
           note: `Used to produce ${quantity} × ${recipe.name}`,
+          createdAtMs: createdAt,
         });
       }
     }
@@ -1088,6 +1432,7 @@ async function buildProductionBatch(
       refType: 'batch',
       refId: batchNo,
       note: `Produced ${quantity} ${recipe.finishedUnit || 'pcs'} of ${recipe.name}`,
+      createdAtMs: createdAt,
     });
 
     const batch: ProductionBatch = {
@@ -1101,7 +1446,7 @@ async function buildProductionBatch(
       finishedItemId: recipe.finishedItemId,
       snapshot,
       notes: notes?.trim() || undefined,
-      createdAtMs: Date.now(),
+      createdAtMs: createdAt,
     };
     await db.runAsync(
       `INSERT INTO production_batches

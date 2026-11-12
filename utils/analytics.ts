@@ -11,7 +11,12 @@
 
 import type { Expense, InvoiceRecord, Unit } from '../types';
 
-export type AnalyticsRange = 'day' | 'week' | 'month' | 'year';
+export type AnalyticsRange = 'day' | 'week' | 'month' | 'year' | 'custom';
+
+export interface AnalyticsDateRange {
+  fromMs: number;
+  toMs: number;
+}
 
 export interface Bucket {
   key: string;
@@ -79,6 +84,20 @@ function addDays(d: Date, days: number): Date {
   return next;
 }
 
+/** "05 Nov 2026" or "05 Nov – 12 Nov 2026" for a custom filter. */
+function formatDateRangeLabel(from: Date, to: Date): string {
+  const sameDay = from.getTime() === to.getTime();
+  const sameYear = from.getFullYear() === to.getFullYear();
+  const shortDay = new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short' });
+  const fullDay = new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  });
+  if (sameDay) return fullDay.format(from);
+  return `${sameYear ? shortDay.format(from) : fullDay.format(from)} – ${fullDay.format(to)}`;
+}
+
 /**
  * The single period the filter stands for: Daily = today, Weekly = this week,
  * Monthly = this month, Yearly = this year. The KPI cards use it so each
@@ -87,7 +106,18 @@ function addDays(d: Date, days: number): Date {
 export function periodBounds(
   range: AnalyticsRange,
   now: Date = new Date(),
+  customRange?: AnalyticsDateRange,
 ): { label: string; startMs: number; endMs: number } {
+  if (range === 'custom') {
+    const start = startOfDay(new Date(customRange?.fromMs ?? now));
+    const requestedEnd = startOfDay(new Date(customRange?.toMs ?? now));
+    const lastDay = requestedEnd.getTime() < start.getTime() ? start : requestedEnd;
+    return {
+      label: formatDateRangeLabel(start, lastDay),
+      startMs: start.getTime(),
+      endMs: addDays(lastDay, 1).getTime(),
+    };
+  }
   if (range === 'day') {
     const start = startOfDay(now);
     return { label: 'Today', startMs: start.getTime(), endMs: addDays(start, 1).getTime() };
@@ -111,8 +141,32 @@ export function periodBounds(
 }
 
 /** Empty, labelled buckets for the range, oldest first. */
-export function buildBuckets(range: AnalyticsRange, now: Date = new Date()): Bucket[] {
+export function buildBuckets(
+  range: AnalyticsRange,
+  now: Date = new Date(),
+  customRange?: AnalyticsDateRange,
+): Bucket[] {
   const buckets: Bucket[] = [];
+
+  if (range === 'custom') {
+    const first = startOfDay(new Date(customRange?.fromMs ?? now));
+    const requestedLast = startOfDay(new Date(customRange?.toMs ?? now));
+    const last = requestedLast.getTime() < first.getTime() ? first : requestedLast;
+    let cursor = first;
+    while (cursor.getTime() <= last.getTime()) {
+      const end = addDays(cursor, 1);
+      buckets.push({
+        key: `c-${cursor.toISOString().slice(0, 10)}`,
+        label: String(cursor.getDate()),
+        startMs: cursor.getTime(),
+        endMs: end.getTime(),
+        total: 0,
+        bills: 0,
+      });
+      cursor = end;
+    }
+    return buckets;
+  }
 
   if (range === 'day') {
     for (let i = 13; i >= 0; i--) {
@@ -195,8 +249,9 @@ export function summarize(
   range: AnalyticsRange,
   now: Date = new Date(),
   expenses: Expense[] = [],
+  customRange?: AnalyticsDateRange,
 ): AnalyticsSummary {
-  const buckets = buildBuckets(range, now);
+  const buckets = buildBuckets(range, now, customRange);
 
   // Fill the trend chart from every bucket, whatever the period filter is.
   for (const record of records) {
@@ -208,7 +263,7 @@ export function summarize(
     bucket.bills += 1;
   }
 
-  const period = periodBounds(range, now);
+  const period = periodBounds(range, now, customRange);
   const inPeriod = records.filter(
     (r) => r.createdAtMs >= period.startMs && r.createdAtMs < period.endMs,
   );

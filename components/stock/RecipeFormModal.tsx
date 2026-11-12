@@ -10,7 +10,9 @@ import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -22,7 +24,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
 import { PrimaryButton } from '../PrimaryButton';
 import { showToast } from '../Toast';
-import { StockItemPickerModal } from './StockItemPickerModal';
+import { ProductPickerModal } from './ProductPickerModal';
 import {
   DISPLAY_UNITS,
   displayUnitLabel,
@@ -34,11 +36,13 @@ import {
 import { persistImage } from '../../utils/imageStore';
 import {
   deleteRecipe,
+  ensureProductStockItem,
   saveRecipe,
   updateRecipe,
+  type ProductStockInfo,
   type RecipeIngredientInput,
 } from '../../store/stockDb';
-import type { Recipe, StockItem, StockUnitType } from '../../types';
+import type { Product, Recipe, StockItem, StockUnitType } from '../../types';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -63,6 +67,10 @@ interface RecipeFormModalProps {
   /** Recipe being edited, or null to add a new one. */
   editing: Recipe | null;
   stockItems: StockItem[];
+  /** Products from Settings → Products, used for the ingredient materials. */
+  products: Product[];
+  /** Current stock availability keyed by product id. */
+  productStock: Record<string, ProductStockInfo>;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -71,6 +79,8 @@ export function RecipeFormModal({
   visible,
   editing,
   stockItems,
+  products,
+  productStock,
   onClose,
   onSaved,
 }: RecipeFormModalProps) {
@@ -131,6 +141,22 @@ export function RecipeFormModal({
     setSaving(false);
   }, [visible, editing, stockItems]);
 
+  const usedProductIds = Array.from(
+    new Set(
+      lines.flatMap((line) => {
+        const linked = Object.keys(productStock).find(
+          (productId) => productStock[productId].stockItemId === line.stockItemId,
+        );
+        if (linked) return [linked];
+        const lineName = line.name.trim().toLowerCase();
+        const byName = products.find(
+          (product) => product.name.trim().toLowerCase() === lineName,
+        );
+        return byName ? [byName.id] : [];
+      }),
+    ),
+  );
+
   const pickImage = async (useCamera: boolean) => {
     const hasPermission = useCamera
       ? (await ImagePicker.requestCameraPermissionsAsync()).granted
@@ -160,22 +186,26 @@ export function RecipeFormModal({
     }
   };
 
-  const addIngredient = (item: StockItem) => {
+  const addIngredient = async (product: Product) => {
     setPickerOpen(false);
+    const uType: StockUnitType = product.unit === 'kg' ? 'weight' : 'piece';
+    const defUnit = product.unit === 'kg' ? 'g' : 'piece';
+    let stockItemId: string;
+    try {
+      stockItemId = await ensureProductStockItem(product, 'material');
+    } catch (e) {
+      showToast('Could not add this product to stock', 'error');
+      console.log('ensureProductStockItem error', e);
+      return;
+    }
     setLines((prev) => {
-      if (prev.some((l) => l.stockItemId === item.id)) return prev;
-      const defUnit =
-        item.unitType === 'weight'
-          ? 'g'
-          : item.unitType === 'volume'
-          ? 'ml'
-          : item.displayUnit || 'piece';
+      if (prev.some((l) => l.stockItemId === stockItemId)) return prev;
       return [
         ...prev,
         {
-          stockItemId: item.id,
-          name: item.name,
-          unitType: item.unitType,
+          stockItemId,
+          name: product.name,
+          unitType: uType,
           selectedUnit: defUnit,
           qtyText: '',
         },
@@ -243,6 +273,11 @@ export function RecipeFormModal({
       return;
     }
 
+    const matchedProduct = products.find(
+      (p) => p.name.trim().toLowerCase() === trimmedName.toLowerCase(),
+    );
+    const productId = matchedProduct?.id ?? editing?.productId;
+
     setSaving(true);
     try {
       if (editing) {
@@ -252,6 +287,7 @@ export function RecipeFormModal({
           price: rateVal,
           finishedUnit,
           notes,
+          productId,
           items: ingredients,
         });
         showToast('Recipe updated! Tap "Produce" on the card to make a batch.');
@@ -262,6 +298,7 @@ export function RecipeFormModal({
           price: rateVal,
           finishedUnit,
           notes,
+          productId,
           items: ingredients,
         });
         showToast('Recipe created! Tap "Produce" on the card to make a batch.');
@@ -307,7 +344,10 @@ export function RecipeFormModal({
   return (
     <>
       <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-        <View style={styles.wrap}>
+        <KeyboardAvoidingView
+          style={styles.wrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
           <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
           <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
             <View style={styles.head}>
@@ -476,7 +516,7 @@ export function RecipeFormModal({
                 style={({ pressed }) => [styles.addLineBtn, pressed && { opacity: 0.8 }]}
               >
                 <Feather name="plus-circle" size={19} color={colors.primary} />
-                <Text style={styles.addLineText}>Select Stock Material</Text>
+                <Text style={styles.addLineText}>Select Product Material</Text>
               </Pressable>
 
               <Text style={[styles.label, styles.inputGap]}>Notes (optional)</Text>
@@ -515,16 +555,17 @@ export function RecipeFormModal({
               ) : null}
             </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
-      <StockItemPickerModal
+      <ProductPickerModal
         visible={pickerOpen}
-        items={stockItems.filter((s) => s.kind === 'material')}
-        excludeIds={lines.map((l) => l.stockItemId)}
-        title="Select Stock Material"
+        products={products}
+        availability={productStock}
+        excludeIds={usedProductIds}
+        title="Select Product Material"
         onClose={() => setPickerOpen(false)}
-        onPick={addIngredient}
+        onPick={(product) => void addIngredient(product)}
       />
     </>
   );

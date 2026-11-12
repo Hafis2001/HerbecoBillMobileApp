@@ -30,6 +30,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import theme from '../../constants/theme';
 import { useResponsive } from '../../hooks/useResponsive';
 import { EmptyState } from '../../components/EmptyState';
+import DateFilterSheet, { type DateFilterValue } from '../../components/DateFilterSheet';
 import { showToast } from '../../components/Toast';
 import { getInvoiceRecords, getExpenses } from '../../store/invoiceDb';
 import {
@@ -59,7 +60,18 @@ const RANGE_NOTE: Record<AnalyticsRange, string> = {
   week: 'Last 8 weeks',
   month: 'Last 12 months',
   year: 'Last 5 years',
+  custom: 'Selected days',
 };
+
+const formatDayShort = (ms: number): string =>
+  new Intl.DateTimeFormat('en-IN', { day: '2-digit', month: 'short' }).format(new Date(ms));
+
+const formatDay = (ms: number): string =>
+  new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(ms));
 
 export default function DashboardTab() {
   const insets = useSafeAreaInsets();
@@ -70,6 +82,8 @@ export default function DashboardTab() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [range, setRange] = useState<AnalyticsRange>('day');
+  const [dateFilter, setDateFilter] = useState<DateFilterValue | null>(null);
+  const [dateSheetOpen, setDateSheetOpen] = useState(false);
 
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -96,16 +110,29 @@ export default function DashboardTab() {
     }, [load]),
   );
 
+  const dateLabel = dateFilter
+    ? dateFilter.mode === 'single' || dateFilter.fromMs === dateFilter.toMs
+      ? formatDay(dateFilter.fromMs)
+      : `${formatDayShort(dateFilter.fromMs)} – ${formatDayShort(dateFilter.toMs)}`
+    : null;
+
+  const customRange = useMemo(
+    () => (dateFilter ? { fromMs: dateFilter.fromMs, toMs: dateFilter.toMs } : undefined),
+    [dateFilter],
+  );
+
+  const activeRange: AnalyticsRange = dateFilter ? 'custom' : range;
+
   const summary = useMemo(
-    () => summarize(records, range, new Date(), expenses),
-    [records, range, expenses],
+    () => summarize(records, activeRange, new Date(), expenses, customRange),
+    [records, activeRange, expenses, customRange],
   );
 
   const maxBucket = Math.max(...summary.buckets.map((b) => b.total), 1);
   // Narrower phones get a shorter chart so it still fits without scrolling, tablets get a taller one.
   const chartHeight = width < 360 ? 118 : isTablet ? 180 : 148;
   // Values above bars only when there is room for them.
-  const showValues = range !== 'day';
+  const showValues = activeRange !== 'day' && summary.buckets.length <= 14;
 
   if (loading) {
     return (
@@ -128,22 +155,74 @@ export default function DashboardTab() {
       </View>
 
       {/* Range filter */}
-      <View style={[styles.filterRow, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
-        {RANGES.map((item) => {
-          const active = range === item.key;
-          return (
-            <Text
-              key={item.key}
-              accessibilityRole="button"
-              accessibilityState={{ selected: active }}
-              onPress={() => setRange(item.key)}
-              style={[styles.filterChip, active && styles.filterChipActive]}
-              suppressHighlighting
-            >
-              {item.label}
+      <View style={[styles.filterWrap, isTablet && { maxWidth: maxContentWidth, alignSelf: 'center', width: '100%' }]}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.filterRow}
+          keyboardShouldPersistTaps="handled"
+        >
+          {RANGES.map((item) => {
+            const active = !dateFilter && range === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                onPress={() => {
+                  setDateFilter(null);
+                  setRange(item.key);
+                }}
+                style={({ pressed }) => [
+                  styles.filterChip,
+                  active && styles.filterChipActive,
+                  pressed && { opacity: 0.85 },
+                ]}
+              >
+                <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Pick a specific date or a date range"
+            accessibilityState={{ selected: Boolean(dateFilter) }}
+            onPress={() => setDateSheetOpen(true)}
+            style={({ pressed }) => [
+              styles.filterChip,
+              styles.dateChip,
+              dateFilter && styles.filterChipActive,
+              pressed && { opacity: 0.85 },
+            ]}
+          >
+            <Feather
+              name="calendar"
+              size={13}
+              color={dateFilter ? colors.textOnPrimary : colors.primary}
+            />
+            <Text style={[styles.filterText, dateFilter && styles.filterTextActive]}>
+              {dateLabel ?? 'Date'}
             </Text>
-          );
-        })}
+            {dateFilter ? (
+              <Pressable
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setDateFilter(null);
+                  setRange('day');
+                }}
+                hitSlop={10}
+                accessibilityLabel="Clear the date filter"
+              >
+                <Feather name="x" size={13} color={colors.textOnPrimary} />
+              </Pressable>
+            ) : (
+              <Feather name="chevron-down" size={13} color={colors.primary} />
+            )}
+          </Pressable>
+        </ScrollView>
       </View>
 
       {records.length === 0 ? (
@@ -320,7 +399,7 @@ export default function DashboardTab() {
           <View style={[styles.chartCard, cardShadow]}>
             <View style={styles.cardHead}>
               <Text style={styles.cardTitle}>Sales trend</Text>
-              <Text style={styles.cardMeta}>{RANGE_NOTE[range]}</Text>
+              <Text style={styles.cardMeta}>{RANGE_NOTE[activeRange]}</Text>
             </View>
 
             {summary.trendTotal === 0 ? (
@@ -335,7 +414,11 @@ export default function DashboardTab() {
                   const barHeight =
                     bucket.total > 0 ? Math.max(6, ratio * (chartHeight - 22)) : 2;
                   const isCurrent = index === summary.buckets.length - 1;
-                  const hideLabel = range === 'week' && index % 2 === 1;
+                  const hideLabel =
+                    (activeRange === 'week' && index % 2 === 1) ||
+                    (summary.buckets.length > 14 &&
+                      index % Math.ceil(summary.buckets.length / 10) !== 0 &&
+                      index !== summary.buckets.length - 1);
                   return (
                     <View key={bucket.key} style={styles.barCol}>
                       {showValues && bucket.total > 0 ? (
@@ -442,6 +525,21 @@ export default function DashboardTab() {
           <ProductionCard summary={prodSummary} />
         </ScrollView>
       )}
+
+      <DateFilterSheet
+        visible={dateSheetOpen}
+        initial={dateFilter}
+        onClose={() => setDateSheetOpen(false)}
+        onApply={(value) => {
+          setDateFilter(value);
+          if (value) {
+            setRange('custom');
+          } else {
+            setRange('day');
+          }
+          setDateSheetOpen(false);
+        }}
+      />
     </SafeAreaView>
   );
 }
@@ -539,30 +637,39 @@ const styles = StyleSheet.create({
     fontSize: fontSize.xs,
     color: colors.textMuted,
   },
-  filterRow: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    paddingHorizontal: spacing.md,
+  filterWrap: {
     paddingVertical: spacing.sm,
   },
+  filterRow: {
+    flexDirection: 'row',
+    gap: spacing.xs + 2,
+    paddingHorizontal: spacing.md,
+  },
   filterChip: {
-    flex: 1,
-    textAlign: 'center',
-    overflow: 'hidden',
     borderRadius: radius.pill,
     backgroundColor: colors.card,
     borderWidth: 1,
     borderColor: colors.border,
-    paddingVertical: 9,
-    fontFamily: fonts.medium,
-    fontSize: fontSize.xs,
-    color: colors.textMuted,
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
   },
   filterChipActive: {
     backgroundColor: colors.primary,
     borderColor: colors.primary,
+  },
+  filterText: {
+    fontFamily: fonts.medium,
+    fontSize: fontSize.xs,
+    color: colors.textMuted,
+  },
+  filterTextActive: {
     color: colors.textOnPrimary,
     fontFamily: fonts.semiBold,
+  },
+  dateChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
   },
   emptyScroll: { flexGrow: 1 },
   body: { paddingHorizontal: spacing.md, paddingTop: spacing.xs },

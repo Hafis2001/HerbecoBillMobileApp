@@ -328,6 +328,7 @@ export default function StockManagementScreen() {
       <StockFormModal
         visible={formOpen}
         editing={editingItem}
+        products={products}
         onClose={() => setFormOpen(false)}
         onSaved={() => void reload()}
       />

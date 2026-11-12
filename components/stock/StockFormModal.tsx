@@ -11,7 +11,9 @@ import { Feather } from '@expo/vector-icons';
 import React, { useEffect, useState } from 'react';
 import {
   Alert,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,6 +25,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import theme from '../../constants/theme';
 import { PrimaryButton } from '../PrimaryButton';
 import { showToast } from '../Toast';
+import { ProductPickerModal } from './ProductPickerModal';
 import {
   DISPLAY_UNITS,
   UNIT_TYPES,
@@ -32,12 +35,11 @@ import {
   toBaseQty,
 } from '../../utils/stock';
 import {
-  createStockItem,
+  addStockForProduct,
   deleteStockItem,
   updateStockItemDetails,
-  type StockItemInput,
 } from '../../store/stockDb';
-import type { StockDisplayUnit, StockItem, StockUnitType } from '../../types';
+import type { Product, StockDisplayUnit, StockItem, StockUnitType } from '../../types';
 
 const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 
@@ -47,13 +49,23 @@ interface StockFormModalProps {
   visible: boolean;
   /** Item being edited, or null to add a new one. */
   editing: StockItem | null;
+  /** Products from Settings → Products, used to add stock. */
+  products: Product[];
   onClose: () => void;
   onSaved: () => void;
 }
 
-export function StockFormModal({ visible, editing, onClose, onSaved }: StockFormModalProps) {
+export function StockFormModal({
+  visible,
+  editing,
+  products,
+  onClose,
+  onSaved,
+}: StockFormModalProps) {
   const insets = useSafeAreaInsets();
   const [name, setName] = useState('');
+  const [selectedProductId, setSelectedProductId] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [category, setCategory] = useState('Ingredients');
   const [unitType, setUnitType] = useState<StockUnitType>('weight');
   const [displayUnit, setDisplayUnit] = useState<StockDisplayUnit>('kg');
@@ -80,6 +92,8 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
       setNotes(editing.notes ?? '');
     } else {
       setName('');
+      setSelectedProductId(null);
+      setPickerOpen(false);
       setCategory('Ingredients');
       setUnitType('weight');
       setDisplayUnit('kg');
@@ -91,8 +105,19 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
     setSaving(false);
   }, [visible, editing]);
 
+  const selectedProduct = products.find((p) => p.id === selectedProductId) ?? null;
+
+  const chooseProduct = (product: Product) => {
+    setPickerOpen(false);
+    setSelectedProductId(product.id);
+    setName(product.name);
+    const nextType: StockUnitType = product.unit === 'kg' ? 'weight' : 'piece';
+    setUnitType(nextType);
+    setDisplayUnit(product.unit === 'kg' ? 'kg' : 'piece');
+  };
+
   const pickUnitType = (type: StockUnitType) => {
-    if (editing) return;
+    if (editing || selectedProduct) return;
     setUnitType(type);
     setDisplayUnit(DISPLAY_UNITS[type][0]);
   };
@@ -127,8 +152,12 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
   const onSubmit = async () => {
     if (saving) return;
     const trimmedName = name.trim();
-    if (!trimmedName) {
+    if (editing && !trimmedName) {
       showToast('Stock item name is required', 'error');
+      return;
+    }
+    if (!editing && !selectedProduct) {
+      showToast('Select a product first', 'error');
       return;
     }
     const minQty = toBase(minText || '0');
@@ -154,24 +183,22 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
           notes,
         });
         showToast('Stock item updated');
-      } else {
+      } else if (selectedProduct) {
         const opening = toBase(openingText || '0');
         if (opening === null) {
           setSaving(false);
           showToast('Opening stock must be a valid quantity', 'error');
           return;
         }
-        const input: StockItemInput = {
-          name: trimmedName,
+        await addStockForProduct({
+          product: selectedProduct,
           category,
-          unitType,
           displayUnit,
           minQtyBase: toBaseQty(minQty, displayUnit),
           purchasePrice: price,
           notes,
-          kind: 'material',
-        };
-        await createStockItem(input, toBaseQty(opening, displayUnit));
+          qtyBase: toBaseQty(opening, displayUnit),
+        });
         showToast('Stock item added');
       }
       onSaved();
@@ -210,9 +237,13 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
   };
 
   return (
-    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
-      <View style={styles.wrap}>
-        <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
+    <>
+      <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+        <KeyboardAvoidingView
+          style={styles.wrap}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        >
+          <Pressable style={styles.backdrop} onPress={onClose} accessibilityLabel="Close" />
         <View style={[styles.sheet, { paddingBottom: insets.bottom + spacing.md }]}>
           <View style={styles.head}>
             <Text style={styles.title}>{editing ? 'Edit Stock Item' : 'Add Stock Item'}</Text>
@@ -226,15 +257,42 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
             keyboardShouldPersistTaps="handled"
             showsVerticalScrollIndicator={false}
           >
-            <Text style={styles.label}>Stock item name</Text>
-            <TextInput
-              value={name}
-              onChangeText={setName}
-              placeholder="e.g. Coffee, Milk, Empty Bottle"
-              placeholderTextColor={colors.textMuted}
-              style={styles.input}
-              returnKeyType="next"
-            />
+            {editing ? (
+              <>
+                <Text style={styles.label}>Stock item name</Text>
+                <TextInput
+                  value={name}
+                  onChangeText={setName}
+                  placeholder="e.g. Coffee, Milk, Empty Bottle"
+                  placeholderTextColor={colors.textMuted}
+                  style={styles.input}
+                  returnKeyType="next"
+                />
+              </>
+            ) : (
+              <>
+                <Text style={styles.label}>Product</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Select product"
+                  onPress={() => setPickerOpen(true)}
+                  style={({ pressed }) => [styles.selectInput, pressed && { opacity: 0.85 }]}
+                >
+                  <Text
+                    style={selectedProduct ? styles.selectValue : styles.selectPlaceholder}
+                    numberOfLines={1}
+                  >
+                    {selectedProduct ? selectedProduct.name : 'Select a product'}
+                  </Text>
+                  <Feather name="chevron-down" size={18} color={colors.textMuted} />
+                </Pressable>
+                {products.length === 0 ? (
+                  <Text style={styles.helper}>
+                    No products yet — add them in Settings → Products first.
+                  </Text>
+                ) : null}
+              </>
+            )}
 
             <Text style={styles.label}>Category</Text>
             <View style={styles.chipRow}>
@@ -271,9 +329,13 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
                     key={type.key}
                     accessibilityRole="button"
                     accessibilityState={{ selected: active }}
-                    disabled={Boolean(editing)}
+                    disabled={Boolean(editing) || Boolean(selectedProduct)}
                     onPress={() => pickUnitType(type.key)}
-                    style={[styles.segmentBtn, active && styles.segmentBtnActive, editing && styles.locked]}
+                    style={[
+                      styles.segmentBtn,
+                      active && styles.segmentBtnActive,
+                      (editing || selectedProduct) && styles.locked,
+                    ]}
                   >
                     <Text style={[styles.segmentTitle, active && styles.segmentTitleActive]}>
                       {type.label}
@@ -305,7 +367,7 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
                 );
               })}
             </View>
-            {editing ? (
+            {editing || selectedProduct ? (
               <Text style={styles.lockNote}>
                 Category ({unitType}) is fixed, but you can switch display units (e.g. kg ↔ g, pieces ↔ bottles).
               </Text>
@@ -386,8 +448,17 @@ export function StockFormModal({ visible, editing, onClose, onSaved }: StockForm
             ) : null}
           </ScrollView>
         </View>
-      </View>
-    </Modal>
+        </KeyboardAvoidingView>
+      </Modal>
+
+      <ProductPickerModal
+        visible={pickerOpen}
+        products={products}
+        title="Select Product"
+        onClose={() => setPickerOpen(false)}
+        onPick={chooseProduct}
+      />
+    </>
   );
 }
 
@@ -438,6 +509,30 @@ const styles = StyleSheet.create({
     minHeight: 48,
     fontSize: fontSize.md,
     color: colors.text,
+    fontFamily: fonts.regular,
+  },
+  selectInput: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+    backgroundColor: colors.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radius.sm,
+    paddingHorizontal: spacing.md,
+    minHeight: 48,
+  },
+  selectValue: {
+    flex: 1,
+    fontSize: fontSize.md,
+    color: colors.text,
+    fontFamily: fonts.medium,
+  },
+  selectPlaceholder: {
+    flex: 1,
+    fontSize: fontSize.md,
+    color: colors.textMuted,
     fontFamily: fonts.regular,
   },
   notesInput: {

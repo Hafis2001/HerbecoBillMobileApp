@@ -120,7 +120,10 @@ export function StockMovementModal({ visible, mode, item, onClose, onSaved }: St
         onSaved();
         onClose();
       } catch (e) {
-        showToast('Could not record the restock', 'error');
+        showToast(
+          e instanceof Error ? e.message : 'Could not record the restock',
+          'error',
+        );
         console.log('recordRestock error', e);
       } finally {
         setSaving(false);

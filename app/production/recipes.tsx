@@ -24,7 +24,13 @@ import { useResponsive } from '../../hooks/useResponsive';
 import { showToast } from '../../components/Toast';
 import { EmptyState } from '../../components/EmptyState';
 import RecipeFormModal from '../../components/stock/RecipeFormModal';
-import { getRecipes, getStockItems } from '../../store/stockDb';
+import {
+  getProductStockBalances,
+  getRecipes,
+  getStockItems,
+  type ProductStockInfo,
+} from '../../store/stockDb';
+import { useProductStore } from '../../store/productStore';
 import { formatBaseQty, displayUnitSingle } from '../../utils/stock';
 import { formatINR } from '../../utils/format';
 import type { Recipe, StockItem } from '../../types';
@@ -34,18 +40,25 @@ const { colors, radius, spacing, fonts, fontSize, cardShadow } = theme;
 export default function ProductionRecipesScreen() {
   const insets = useSafeAreaInsets();
   const { isTablet, maxContentWidth } = useResponsive();
+  const products = useProductStore((s) => s.products);
 
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [stockItems, setStockItems] = useState<StockItem[]>([]);
+  const [productStock, setProductStock] = useState<Record<string, ProductStockInfo>>({});
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Recipe | null>(null);
 
   const reload = useCallback(async () => {
     try {
-      const [recipeList, items] = await Promise.all([getRecipes(), getStockItems()]);
+      const [recipeList, items, balances] = await Promise.all([
+        getRecipes(),
+        getStockItems(),
+        getProductStockBalances(),
+      ]);
       setRecipes(recipeList);
       setStockItems(items);
+      setProductStock(balances);
     } catch {
       showToast('Could not load recipes', 'error');
     } finally {
@@ -192,6 +205,8 @@ export default function ProductionRecipesScreen() {
         visible={formOpen}
         editing={editing}
         stockItems={stockItems}
+        products={products}
+        productStock={productStock}
         onClose={() => setFormOpen(false)}
         onSaved={() => void reload()}
       />
